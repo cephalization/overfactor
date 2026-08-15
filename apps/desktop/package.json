@@ -1,0 +1,43 @@
+{
+  "name": "@overfactor/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Overfactor desktop app.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "node -e \"require('electron')\" && electron-vite dev -w",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@overfactor/daemon": "workspace:*",
+    "@overfactor/sdk": "workspace:*",
+    "@tanstack/query-db-collection": "catalog:",
+    "@tanstack/react-db": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "lucide-react": "catalog:",
+    "partysocket": "catalog:",
+    "radix-ui": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwind-merge": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "catalog:",
+    "electron-vite": "catalog:",
+    "tailwindcss": "catalog:",
+    "tw-animate-css": "catalog:",
+    "typescript": "catalog:",
+    "vite": "^7.3.6",
+    "vite-plus": "catalog:"
+  }
+}

@@ -11,7 +11,7 @@ Settled in design review (Tony), supersedes nothing:
 - **Shell**: Electron from day one (not daemon-served web UI). UI in **React**.
 - **Daemon**: standalone **TypeScript/Node** process, separate from Electron; the app is a client. Daemon outlives the app window.
 - **Transport**: daemon serves HTTP + WebSocket on `127.0.0.1`, port published to `~/.overfactor/daemon.json`. Short-lived hook processes POST events (HTTP ingest); the app subscribes over WS. Both sides go through the typed SDK.
-- **Agent integration model** (reference: https://github.com/herdrdev/herdr — integrations + socket API): a strongly typed SDK published to npm; per-agent integrations are installed *into each agent's own hook/extension system* (Claude Code hooks invoking a small CLI; pi extensions are `.ts` files in `~/.pi/agent/extensions/`) and push lifecycle + session-identity events to the daemon. Unlike herdr, Overfactor does not own the PTY, so there is no screen-scraping fallback — hooks + the agent's transcript files carry everything. Integration order: claude-code first, pi second (pi exists to prove the SDK isn't shaped around one harness).
+- **Agent integration model** (reference: https://github.com/herdrdev/herdr — integrations + socket API): a strongly typed SDK published to npm; per-agent integrations are installed _into each agent's own hook/extension system_ (Claude Code hooks invoking a small CLI; pi extensions are `.ts` files in `~/.pi/agent/extensions/`) and push lifecycle + session-identity events to the daemon. Unlike herdr, Overfactor does not own the PTY, so there is no screen-scraping fallback — hooks + the agent's transcript files carry everything. Integration order: claude-code first, pi second (pi exists to prove the SDK isn't shaped around one harness).
 - **Diff attribution**: a session's diff is `git diff` of the worktree it runs in (its cwd). Sessions sharing a worktree show identical stats — accepted until Overfactor launches sessions into per-session worktrees itself (the target workflow, later slice).
 
 ## 2026-08-15 — decided — libraries
@@ -19,36 +19,97 @@ Settled in design review (Tony), supersedes nothing:
 Guiding rule (Tony): minimize hand-written code not covered by a purpose-built, well-maintained library; use each library idiomatically as its docs prescribe. Versions verified current on npm 2026-08-15.
 
 **UI (Electron renderer)**
+
 - React; **shadcn/ui strictly via the shadcn CLI, never hand-edited**, with the idiomatic CSS-variable theme setup so theme tweaks propagate app-wide.
 - **Tailwind v4** (latest).
-- **@pierre/diffs** for git diff + code rendering. Theming decision: *two theme domains* — shadcn tokens govern the app shell; pierre/shiki themes govern code surfaces (chosen once to harmonize, incl. dark/light). Do not bridge pierre's theming onto shadcn vars.
+- **@pierre/diffs** for git diff + code rendering. Theming decision: _two theme domains_ — shadcn tokens govern the app shell; pierre/shiki themes govern code surfaces (chosen once to harmonize, incl. dark/light). Do not bridge pierre's theming onto shadcn vars.
 - **streamdown** for markdown→markup (built for AI streaming; fits live transcripts).
 - **TanStack Router** (typed routes for panes/views), **TanStack Virtual** (long transcripts/diffs), **cmdk via shadcn Command**, **react-hotkeys-hook** (keyboard-first review).
 
 **Data sync**
+
 - **TanStack Query + TanStack DB**, prescribed usage: `queryCollection` loads collections; daemon WS events invalidate → refetch (no custom sync implementation). Note: TanStack DB is 0.x — API churn accepted, ride releases.
 - **partysocket** for the app's reconnecting WS connection to the daemon.
 
 **Contract / I/O boundaries**
+
 - **zod v4** schemas are the shared type contracts, shipped in the npm SDK. Every I/O boundary validates: hook payloads, HTTP bodies, WS messages, and transcript/state files read off disk. Never trust unvalidated input types.
 - **Hono + @hono/zod-validator** on the daemon; **hono/client (`hc`)** gives the typed RPC client in the SDK. Accepted glue: one thin typed helper binding `hc` calls into TanStack Query options.
 
 **Daemon**
+
 - **drizzle-orm + better-sqlite3** for persistence (daemon is plain Node — no Electron ABI concerns).
 - **just-git (v2 branch, vendored)** for git operations. Verified 2026-08-15: v2 (unpublished) has what master lacks — a Node fs bridge (`src/fs/node-durable-fs.ts`, `src/store/node-fs.ts`) and true linked-worktree mechanics (`src/lib/worktree-admin.ts`: gitlink `.git` files, `commondir` back-pointers, `worktrees/<id>` admin dirs). Plan: clone `blindmansion/just-git@v2` into `packages/just-git` as a workspace package with its own nested git repo, and build off v2 until it ships to npm; then swap the `workspace:*` dep for the published version. Vendoring notes: (a) prefer a git submodule pinned to v2 so fresh checkouts reproduce — a gitignored plain clone breaks `pnpm install`'s `workspace:*` resolution; (b) exclude `packages/just-git` from `vp check`/`vp test` (it carries its own oxlint/oxfmt config and bun-only tests); its build is plain `tsc`, so `pnpm --filter just-git build` works without bun. Residual risk: tracking an unreleased branch — validate reading a real `git worktree add` worktree as the first integration test, and treat upstream v2 API churn as expected. Upside stands: `createSandboxWorktree` + embeddable server are purpose-built for the later sandbox slice.
 - **chokidar** for file watching.
 
 **Daemon/SDK tooling** (settled 2026-08-15; versions verified current on npm)
+
 - **@hono/node-server + @hono/node-ws** — idiomatic Hono-on-Node with WS upgrade (wraps `ws`).
 - **pino** for structured logging (child loggers per subsystem; pino-pretty in dev; pino-roll for rotation).
 - **citty** for the `overfactor` CLI (daemon start/stop/status, integration install/uninstall). Pre-1.0 — churn accepted, same bet as TanStack DB. The Claude Code **hook shim stays dependency-free by design** (stdin → zod parse → POST → exit): it runs on every tool call, cold-start latency is the budget, no CLI framework there.
 - **GitHub: `gh auth token` → octokit.** Token sourced from the user's existing gh login (no auth UX to build), all API calls through octokit for full typing. Requires gh installed — acceptable on machines running coding agents.
 - **execa** (process spawning), **drizzle-kit** (migrations), **p-queue + p-retry** (polling/backoff), **uuidv7** (time-sortable IDs), **emittery** (typed internal events), **tsdown via `vp pack`** (SDK build).
 - **launchd**: accepted hand-rolled exception — no well-maintained npm launchd manager exists. Small module (~100 lines): `plist` pkg writes the LaunchAgent, execa drives `launchctl bootstrap/bootout`; `KeepAlive` provides crash-restart.
-- **Single-instance daemon needs no lockfile lib**: binding the localhost port *is* the lock; write `~/.overfactor/daemon.json` only after a successful bind. (`proper-lockfile` is unmaintained since 2022 — avoid.)
+- **Single-instance daemon needs no lockfile lib**: binding the localhost port _is_ the lock; write `~/.overfactor/daemon.json` only after a successful bind. (`proper-lockfile` is unmaintained since 2022 — avoid.)
 
 **Electron build**
+
 - **electron-vite 5** (main/preload/renderer, Vite-native) + **electron-builder** (package/sign/update).
+
+## 2026-08-15 — implemented — slice one (daemon → live sidebar): constraints and revisions
+
+Slice one is built: `packages/sdk`, `packages/daemon` (with `overfactor` CLI), `packages/integration-claude-code`, `packages/just-git` (submodule), `apps/desktop`. End-to-end smoke-tested (hook shim → daemon → sessions API with lifecycle transitions and live diff stats). Non-obvious findings:
+
+**Contract topology (revises "typed `hc` client ships in the SDK")**
+
+- zod schemas + `~/.overfactor` discovery helpers live in `@overfactor/sdk` (root export is isomorphic; Node-only helpers under `@overfactor/sdk/node`). The Hono `AppType` and `createDaemonClient` (`hc`) live in `@overfactor/daemon/client` — a runtime-light subpath. Reason: putting `hc<AppType>` in the SDK creates an sdk↔daemon build cycle (daemon needs sdk's runtime; sdk's dts would need daemon's types). Revisit only when the SDK actually publishes to npm.
+- The hook shim uses bare `fetch` + SDK schemas (no hono/client) — it runs on every tool call; cold start is the budget.
+- Single-instance lock is a **fixed default port (41417)**; `OVERFACTOR_PORT` and `OVERFACTOR_DIR` env overrides exist (tests and smoke runs use them). An ephemeral port would break bind-as-lock.
+
+**Toolchain (vite-plus 0.2.9)**
+
+- The scaffold's `vite`/`vitest` catalog aliases + overrides (`npm:@voidzero-dev/vite-plus-core@latest` etc.) are a 0.1.x-era scheme and now break: `@voidzero-dev/vite-plus-test` latest lags at 0.1.24 and drags in an old core whose rolldown binding is incompatible with vite-plus 0.2.9. Removed the aliases/overrides entirely (matches vite-plus's own docs workspace). Packages with tests devDep real `vitest` (^4.1.10 — the exact version vite-plus 0.2.9 bundles) so type-aware lint resolves it.
+- `pack.dts.tsgo: true` requires `@typescript/native-preview` (root devDep) — the scaffold never installed it.
+- tsdown's `exports: true` regenerates `bin` and names it after the package directory; daemon/integration hand-maintain `exports`/`bin` (`exports: false`) to keep the `overfactor` and `overfactor-claude-hook` bin names.
+- pnpm 11 uses `allowBuilds` (map, in pnpm-workspace.yaml) for build-script approval; better-sqlite3 and electron are approved, just-git's bun-test-only natives (ssh2, zstd, …) declined.
+- `vp run -F '!just-git'` excludes a package from recursive task runs, but `-F` cannot be combined with `-r`. Root `ready` script and the root vite config `test.exclude`/`lint.ignorePatterns`/`fmt.ignorePatterns` all carve out `packages/just-git` (own toolchain: oxlint config, bun tests, plain tsc build).
+
+**just-git v2 (validation passed)**
+
+- `createGit({ fs: durableFileSystemFromNodeFs(fsPromises), cwd })` + `exec("diff HEAD --numstat")` computes diff stats over real repos **including `git worktree add` linked worktrees** — the planned first integration test (`packages/daemon/tests/diff.test.ts`) passes. No system-git shellouts in the daemon.
+- Diff semantics chosen for slice one: staged + unstaged changes to tracked files vs HEAD (`diff HEAD`); untracked files are not counted. Revisit when sessions get per-session worktrees.
+- just-git dists from `dist/`, so fresh checkouts need `vp run -r build` (its build is plain tsc; no bun required outside its test suite).
+
+**Electron / UI**
+
+- electron-vite 5 peers vite ^5–^7 (not 8): `apps/desktop` pins `vite: ^7` and `@vitejs/plugin-react: ^5` (plugin-react 6 imports vite 8's `./internal` export and crashes on vite 7).
+- The shadcn CLI is pnpm-catalog-aware: it writes `catalog:` deps and appends catalog entries. It did not add `clsx`/`tailwind-merge`/`tw-animate-css` (added manually). Generated `components/ui/**` + `hooks/use-mobile.ts` are excluded from fmt/lint — "never hand-edited" includes the formatter, so future `shadcn add --overwrite` stays diff-clean.
+- Preload runs with `sandbox: false` (required for ESM preloads); context isolation stays on, and everything crossing the bridge is typed `unknown` and zod-parsed in the renderer (`daemonInfoSchema` on daemon.json, `sessionSchema[]` on fetches, `wsServerMessageSchema` on WS messages).
+
+**Repo tracking (added with the GUI picker)**
+
+- Tracked-repo mutations flow through one module (`packages/daemon/src/repos.ts`) used by both the HTTP API (`GET/POST/DELETE /repos`) and the CLI. The GUI never writes config itself: Electron main only runs the native directory picker (IPC `overfactor:pick-directory`); the renderer POSTs the chosen path to the daemon, which validates `.git` exists. Config-file writes from either side hit the daemon's config watcher, which reloads in-memory state and broadcasts a WS `repos` invalidation — so CLI adds appear live in an open app and vice versa.
+
+**Found via agent-driven UI testing (agent-browser over CDP; see TESTING.md)**
+
+- **CORS**: the electron-vite dev renderer runs on `http://localhost:<port>` while the daemon is `127.0.0.1` — cross-origin, so without CORS every renderer fetch fails and the sidebar stays empty (WS still connects; only fetches die). The daemon now runs hono/cors allowing loopback origins (`localhost`/`127.0.0.1` any port) plus `"null"` (packaged file:// pages). Known gap, documented intentionally: any local browser page can call the loopback API (blast radius: fake sessions, track/untrack repos — all zod-validated). The real fix when auth matters is a bearer token in `daemon.json` (mode 0600) that browsers on other origins can't read.
+- **daemon.json lifecycle races**: `daemon stop` used to return when the health check died — _before_ the old process removed `daemon.json` — so an immediate `start` could have its freshly written file deleted by the old process, orphaning a healthy daemon the CLI could no longer see. Fixes: `stop` waits for actual process exit (`kill(pid, 0)`); shutdown only removes `daemon.json` if its pid is our own; `GET /health` returns the pid and the CLI falls back to probing the fixed port when `daemon.json` is missing; the daemon republishes `daemon.json` if it is deleted while running.
+- **Agent-testability hook**: `OVERFACTOR_CDP_PORT=<port>` makes the desktop app expose Chrome DevTools Protocol (`app.commandLine.appendSwitch("remote-debugging-port", …)` before ready) so agent-browser can `connect` and drive it. Session buttons expose state/title/agent/diff in their accessible names — snapshot-grep beats screenshots for assertions. The native directory picker is not CDP-drivable; agents exercise repo tracking via `POST /repos`.
+
+**Dev loop (`vp run dev`)**
+
+- One idempotent command: prebuild (`vp run -F '@overfactor/daemon...' build`), then **concurrently -k** runs three `vp pack --watch` lanes, the daemon under **`node --watch`** (restarts whenever its dist or a workspace dep's dist changes), and `electron-vite dev -w`. The daemon lane runs `daemon stop &&` first, so re-running takes over any existing daemon; `-k` means Ctrl-C (or any lane dying, including closing the app window) tears the whole stack down — verified: no orphan processes, daemon.json removed.
+- **"Error: Electron uninstall" gotcha**: pnpm's side-effects cache materializes new electron peer-variants (e.g. `electron@43.4.0_supports-color@…` appearing when an unrelated dep shifts peers) _without_ the downloaded binary. Electron 43's `index.js` self-heals on require, so the desktop dev script preflights with `node -e "require('electron')"` — idempotent, no-op when the binary exists.
+
+**First real-usage debugging (hooks installed, "no sessions")**
+
+- **Silent daemon death under `node --watch`**: when the daemon crashes, `node --watch` prints the error once and waits for file changes — the dev stack looks alive (concurrently lanes green, stale `daemon.json` on disk) while every hook event is silently dropped. Hardened: WS broadcast wraps each `send` and evicts failing sockets (renderer hot-reloads churn connections; a send racing a close was the likely killer), the config watcher got an error handler, the repo watcher now ignores `.git`/`node_modules` at the watcher level (not just in the handler — watching a monorepo's node_modules burns descriptors), and the foreground daemon installs uncaughtException/unhandledRejection handlers that log `daemon crashed (…)` via pino before exiting, so a dead daemon is always visible in the `[daemon]` lane and `~/.overfactor/daemon.log`. Dropped events (untracked cwd) are now warned about too.
+- **just-git v2 cannot diff repos containing submodules**: a gitlink index entry (mode 160000, a directory in the worktree) hits an unguarded file read → `EISDIR`, exit 1 — reproduced on a minimal two-file repo. Since this repo vendors just-git _as a submodule_, every diff of Overfactor itself failed. Documented deviation from "no system-git shellouts": `computeDiffStats` falls back to `git diff HEAD --numstat` via execFile when just-git errors (pure-TS path stays primary). Report upstream and drop the fallback when v2 handles gitlinks.
+
+**Deferred (intentionally)**
+
+- drizzle-kit migrations: the daemon creates its single table with inline DDL kept in lockstep with the drizzle schema; a migration pipeline starts when the schema outgrows one table.
+- launchd module and `gh`→octokit: not needed by slice one; unchanged decisions, not yet implemented.
 
 ## 2026-08-15 — note — docs: reading design.html
 

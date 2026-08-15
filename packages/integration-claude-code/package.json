@@ -1,0 +1,35 @@
+{
+  "name": "@overfactor/integration-claude-code",
+  "version": "0.0.0",
+  "description": "Claude Code hooks integration for Overfactor: hook shim and settings installer.",
+  "license": "MIT",
+  "bin": {
+    "overfactor-claude-hook": "./dist/hook.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./hook": "./dist/hook.mjs",
+    "./install": "./dist/install.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@overfactor/sdk": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
+  }
+}
