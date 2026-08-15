@@ -19,6 +19,16 @@ Do not duplicate the same information across all four documents. Update the docu
 4. When consulting external documentation, use the version matching what is actually installed — behavior changes materially between releases.
 5. Preserve unrelated work in a dirty worktree.
 
+## Technology
+
+This repository is a pnpm-managed Vite+ monorepo (`apps/*`, `packages/*`). Vite+ is a unified toolchain (Vite, Vitest, Oxlint, Oxfmt, Rolldown, tsdown) driven entirely through one `vp` CLI — use `vp <command>` instead of calling pnpm, npm, vitest, or oxlint directly. Run `vp help` for the full command list.
+
+Learn more:
+
+- Guide: https://viteplus.dev/guide/
+- Repository: https://github.com/voidzero-dev/vite-plus
+- Local docs (after `vp install`): `node_modules/vite-plus/docs`
+
 ## Architecture Rules
 
 - Prefer existing components, patterns, and tokens before introducing another abstraction or dependency.
@@ -27,9 +37,7 @@ Do not duplicate the same information across all four documents. Update the docu
 
 ## Validation
 
-Run the project's standard checks (typecheck/lint/tests) after every change. For changes touching build config, routing, or platform-level concerns, run any heavier verification available (e.g. a full build/export).
-
-*(Placeholder: fill in the exact commands once the stack and tooling are chosen.)*
+Run `vp check` (format, lint, and type checks) and `vp test` after every change. For changes touching build config, workspace layout, or other platform-level concerns, also run `vp run build -r` to catch integration issues a single package's checks would miss.
 
 ## Documentation Updates
 
