@@ -1,11 +1,13 @@
 import { createDaemonClient } from "@overfactor/daemon/client";
 import {
+  changeRequestSchema,
   type DaemonInfo,
   daemonInfoSchema,
   overfactorConfigSchema,
   type Session,
   sessionDiffSchema,
   sessionSchema,
+  sessionTranscriptSchema,
   wsServerMessageSchema,
 } from "@overfactor/sdk";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
@@ -150,5 +152,51 @@ export function useSessionDiff(baseUrl: string, sessionId: string) {
       if (!response.ok) throw new Error(`diff request failed (${response.status})`);
       return sessionDiffSchema.parse(await response.json());
     },
+  });
+}
+
+/** Change Requests from `GET /crs`; kept fresh by WS "crs" invalidations. */
+export function useCrs(baseUrl: string) {
+  return useQuery({
+    queryKey: ["crs", baseUrl],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).crs.$get();
+      return z.array(changeRequestSchema).parse(await response.json());
+    },
+  });
+}
+
+/**
+ * Transcript tail for one session, parsed by the daemon from the agent's own
+ * transcript file. Lives under the "transcripts" queryKey prefix so the
+ * daemon's transcript-file watcher invalidations refetch it.
+ */
+export function useSessionTranscript(baseUrl: string, session: Session) {
+  return useQuery({
+    // transcriptPath is part of the key: it can arrive after the first fetch
+    // (session-start racing earlier events), and nothing else invalidates the
+    // empty result in that case.
+    queryKey: ["transcripts", baseUrl, session.id, session.transcriptPath],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).sessions[":id"].transcript.$get({
+        param: { id: session.id },
+      });
+      if (!response.ok) throw new Error(`transcript request failed (${response.status})`);
+      return sessionTranscriptSchema.parse(await response.json());
+    },
+  });
+}
+
+/** Manual session rename; wins over agent-generated and prompt titles. */
+export function useRenameSession(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({ sessionId, title }: { sessionId: string; title: string }) => {
+      const response = await createDaemonClient(baseUrl).sessions[":id"].title.$post({
+        param: { id: sessionId },
+        json: { title },
+      });
+      if (!response.ok) throw new Error(`rename failed (${response.status})`);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
 }

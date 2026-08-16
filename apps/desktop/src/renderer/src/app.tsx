@@ -7,6 +7,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import {
   createSessionsCollection,
   useAddRepo,
+  useCrs,
   useDaemonInfo,
   useRemoveRepo,
   useRepos,
@@ -41,6 +42,7 @@ function Connected({ info }: { info: DaemonInfo }) {
     [collection],
   );
   const repos = useRepos(baseUrl);
+  const crs = useCrs(baseUrl);
   const addRepo = useAddRepo(baseUrl);
   const removeRepo = useRemoveRepo(baseUrl);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -50,6 +52,7 @@ function Connected({ info }: { info: DaemonInfo }) {
     <SidebarProvider>
       <SessionSidebar
         sessions={sessions ?? []}
+        crs={crs.data ?? []}
         selectedId={selectedId}
         onSelect={setSelectedId}
         repos={repos.data ?? []}
@@ -57,21 +60,21 @@ function Connected({ info }: { info: DaemonInfo }) {
         onRemoveRepo={(path) => removeRepo.mutate(path)}
         addRepoError={addRepo.error?.message ?? null}
       />
-      <SidebarInset>
-        <header className="flex h-12 items-center gap-2 border-b px-4">
+      {/* Viewport-bound so the detail view's panels (diff / transcript)
+          scroll independently. The diff pane is its own scroll container —
+          position:sticky (file tree, group summaries) binds to it. */}
+      <SidebarInset className="h-svh overflow-hidden">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger />
           <span className="text-sm text-muted-foreground">
             Connected to daemon on port {info.port}
           </span>
         </header>
-        {/* The document is the scroll container — an overflow-auto ancestor
-            that never actually scrolls would capture and break position:sticky
-            (the diff view's file tree relies on it). */}
-        <main className="flex flex-1">
+        <main className="min-h-0 flex-1">
           {selected !== null ? (
             <SessionDetail baseUrl={baseUrl} session={selected} />
           ) : (
-            <div className="flex flex-1 items-center justify-center">
+            <div className="flex h-full items-center justify-center">
               <p className="text-sm text-muted-foreground">Select a session to see its details.</p>
             </div>
           )}

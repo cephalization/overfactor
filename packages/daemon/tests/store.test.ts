@@ -69,7 +69,7 @@ describe("SessionStore lifecycle", () => {
       event({ type: "session-start", sessionId: "sess-2", transcriptPath: null }),
       REPO,
     );
-    store.setDiffForCwd("/repo/sub", { filesChanged: 3, insertions: 5, deletions: 1 });
+    store.setWorktreeState("/repo/sub", { filesChanged: 3, insertions: 5, deletions: 1 }, null);
     for (const session of store.list()) {
       expect(session.diff).toEqual({ filesChanged: 3, insertions: 5, deletions: 1 });
     }
@@ -78,18 +78,61 @@ describe("SessionStore lifecycle", () => {
   it("skips write and change event when diff stats are unchanged", async () => {
     const store = makeStore();
     store.applyEvent(event({ type: "session-start", transcriptPath: null }), REPO);
-    store.setDiffForCwd("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 });
+    store.setWorktreeState("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 }, null);
     const before = store.list()[0]?.updatedAt;
 
     let emitted = 0;
     store.events.on("changed", () => {
       emitted += 1;
     });
-    store.setDiffForCwd("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 });
+    store.setWorktreeState("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 }, null);
     await new Promise((r) => setTimeout(r, 0));
 
     expect(emitted).toBe(0);
     expect(store.list()[0]?.updatedAt).toBe(before);
+  });
+
+  it("groups sessions into CRs by worktree branch, with pin override", () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: null }), REPO);
+    store.applyEvent(
+      event({ type: "session-start", sessionId: "sess-2", cwd: "/repo/wt2", transcriptPath: null }),
+      REPO,
+    );
+
+    const cr = store.ensureChangeRequest(REPO, "feat/rate-limit_ingest-api");
+    expect(cr.title).toBe("rate limit ingest api");
+    expect(store.ensureChangeRequest(REPO, "feat/rate-limit_ingest-api").id).toBe(cr.id);
+
+    // sess-1's worktree is on the CR branch; sess-2 is on the default branch.
+    store.setWorktreeState("/repo/sub", null, "feat/rate-limit_ingest-api");
+    store.setWorktreeState("/repo/wt2", null, "main");
+
+    const byId = new Map(store.list().map((s) => [s.id, s]));
+    expect(byId.get("sess-1")?.crId).toBe(cr.id);
+    expect(byId.get("sess-1")?.branch).toBe("feat/rate-limit_ingest-api");
+    expect(byId.get("sess-2")?.crId).toBeNull();
+
+    // Manual pin overrides automatic grouping; clearing it restores auto.
+    const other = store.ensureChangeRequest(REPO, "fix/other");
+    expect(store.pinSession("sess-1", other.id)).toBe(true);
+    expect(store.get("sess-1")?.crId).toBe(other.id);
+    expect(store.pinSession("sess-1", null)).toBe(true);
+    expect(store.get("sess-1")?.crId).toBe(cr.id);
+    expect(store.pinSession("nope", null)).toBe(false);
+  });
+
+  it("emits crsChanged only when a CR is created", async () => {
+    const store = makeStore();
+    let emitted = 0;
+    store.events.on("crsChanged", () => {
+      emitted += 1;
+    });
+    store.ensureChangeRequest(REPO, "feat/a");
+    store.ensureChangeRequest(REPO, "feat/a");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(emitted).toBe(1);
+    expect(store.listChangeRequests()).toHaveLength(1);
   });
 
   it("excludes ended sessions from live cwds", () => {
@@ -106,5 +149,39 @@ describe("SessionStore lifecycle", () => {
     );
     store.applyEvent(event({ type: "session-end", sessionId: "sess-2", cwd: "/repo/other" }), REPO);
     expect(store.liveCwds(REPO)).toEqual(["/repo/sub"]);
+  });
+});
+
+describe("title precedence", () => {
+  it("prompt fills empty, native beats prompt, manual beats native", () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: "/t.jsonl" }), REPO);
+    store.applyEvent(event({ type: "user-prompt", prompt: "first prompt" }), REPO);
+    expect(store.get("sess-1")?.title).toBe("first prompt");
+
+    store.setNativeTitle("/t.jsonl", "Agent generated title");
+    expect(store.get("sess-1")?.title).toBe("Agent generated title");
+
+    // later prompts never override
+    store.applyEvent(event({ type: "user-prompt", prompt: "second prompt" }), REPO);
+    expect(store.get("sess-1")?.title).toBe("Agent generated title");
+
+    expect(store.renameSession("sess-1", "My name")).toBe(true);
+    store.setNativeTitle("/t.jsonl", "Newer agent title");
+    expect(store.get("sess-1")?.title).toBe("My name");
+    expect(store.renameSession("nope", "x")).toBe(false);
+  });
+
+  it("native title update is a no-op when unchanged", async () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: "/t.jsonl" }), REPO);
+    store.setNativeTitle("/t.jsonl", "Stable");
+    let emitted = 0;
+    store.events.on("changed", () => {
+      emitted += 1;
+    });
+    store.setNativeTitle("/t.jsonl", "Stable");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(emitted).toBe(0);
   });
 });

@@ -1,5 +1,5 @@
 import { watch as watchFs } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -12,9 +12,11 @@ import {
 } from "@overfactor/sdk/node";
 import { watch, type FSWatcher as ChokidarWatcher } from "chokidar";
 import type { WSContext } from "hono/ws";
-import { createApp, DAEMON_VERSION } from "./app.ts";
+import { extractSessionTitle as extractClaudeTitle } from "@overfactor/integration-claude-code/transcript";
+import { extractSessionTitle as extractPiTitle } from "@overfactor/integration-pi/transcript";
+import { createApp, DAEMON_VERSION, resolveRepoForCwd } from "./app.ts";
 import { openDb } from "./db.ts";
-import { computeDiffStats } from "./diff.ts";
+import { computeDiffStats, currentBranch, defaultBranch, mainWorktreeRoot } from "./diff.ts";
 import { GitIgnoreMatcher, isBuiltInIgnoredPath } from "./gitignore.ts";
 import { createLogger, type Logger } from "./logger.ts";
 import { SessionStore } from "./store.ts";
@@ -24,6 +26,12 @@ export const DEFAULT_PORT = 41417;
 
 const DIFF_DEBOUNCE_MS = 300;
 const WATCHER_REARM_DELAY_MS = 5000;
+
+function extractTitle(agent: string, content: string): string | null {
+  if (agent === "claude-code") return extractClaudeTitle(content);
+  if (agent === "pi") return extractPiTitle(content);
+  return null;
+}
 
 /**
  * Only macOS and Windows back `fs.watch({ recursive: true })` with the
@@ -64,10 +72,27 @@ export async function startDaemon(options?: {
 
   let closing = false;
 
-  // Debounced per-cwd diff recomputation.
+  // Debounced per-cwd worktree state recomputation: diff stats, checked-out
+  // branch, and the branch's Change Request (created on first sight when the
+  // branch diverges from the repo default; default-branch sessions stay
+  // ungrouped).
   const diffTimers = new Map<string, NodeJS.Timeout>();
   const diffLog = log.child({ subsystem: "diff" });
-  const scheduleDiff = (cwd: string): void => {
+  const defaultBranches = new Map<string, string | null>();
+  const repoDefaultBranch = async (repoPath: string): Promise<string | null> => {
+    if (!defaultBranches.has(repoPath)) {
+      defaultBranches.set(repoPath, await defaultBranch(repoPath));
+    }
+    return defaultBranches.get(repoPath) ?? null;
+  };
+  const refreshWorktreeState = async (cwd: string, repoPath: string): Promise<void> => {
+    const [stats, branch] = await Promise.all([computeDiffStats(cwd), currentBranch(cwd)]);
+    if (branch !== null && branch !== (await repoDefaultBranch(repoPath))) {
+      store.ensureChangeRequest(repoPath, branch);
+    }
+    store.setWorktreeState(cwd, stats, branch);
+  };
+  const scheduleDiff = (cwd: string, repoPath: string): void => {
     if (closing) return;
     const existing = diffTimers.get(cwd);
     if (existing !== undefined) clearTimeout(existing);
@@ -75,19 +100,49 @@ export async function startDaemon(options?: {
       cwd,
       setTimeout(() => {
         diffTimers.delete(cwd);
-        computeDiffStats(cwd)
-          .then((stats) => {
-            if (stats !== null) store.setDiffForCwd(cwd, stats);
-          })
-          .catch((error: unknown) => diffLog.warn({ cwd, error }, "diff computation failed"));
+        refreshWorktreeState(cwd, repoPath).catch((error: unknown) =>
+          diffLog.warn({ cwd, error }, "worktree state refresh failed"),
+        );
       }, DIFF_DEBOUNCE_MS),
     );
   };
 
+  // Linked `git worktree` checkouts live outside the tracked repo root, so a
+  // prefix match alone would drop their events; fall back to resolving the
+  // cwd's main worktree and matching that. Git reports physical paths, so
+  // tracked repos are also indexed by realpath (e.g. /tmp vs /private/tmp on
+  // macOS). Cached per cwd; both caches reset on config reload.
+  const worktreeRepoCache = new Map<string, string | null>();
+  const realRepoIndex = new Map<string, string>();
+  const refreshRealRepoIndex = async (): Promise<void> => {
+    realRepoIndex.clear();
+    for (const repo of config.repos) {
+      try {
+        realRepoIndex.set(await realpath(repo), repo);
+      } catch {
+        // repo path missing on disk; prefix matching still applies
+      }
+    }
+  };
+  await refreshRealRepoIndex();
+  const resolveRepo = async (cwd: string): Promise<string | null> => {
+    const direct = resolveRepoForCwd(config.repos, cwd);
+    if (direct !== null) return direct;
+    const cached = worktreeRepoCache.get(cwd);
+    if (cached !== undefined) return cached;
+    const mainRoot = await mainWorktreeRoot(cwd);
+    const resolved =
+      mainRoot === null
+        ? null
+        : (resolveRepoForCwd(config.repos, mainRoot) ?? realRepoIndex.get(mainRoot) ?? null);
+    worktreeRepoCache.set(cwd, resolved);
+    return resolved;
+  };
+
   const app = createApp({
     store,
-    repos: () => config.repos,
-    onEvent: (event) => scheduleDiff(event.cwd),
+    resolveRepo,
+    onEvent: (event, repoPath) => scheduleDiff(event.cwd, repoPath),
     onDrop: (event) =>
       log.warn(
         { cwd: event.cwd, sessionId: event.sessionId, type: event.type },
@@ -120,6 +175,69 @@ export async function startDaemon(options?: {
     }
   };
   store.events.on("changed", () => broadcast("sessions"));
+  store.events.on("crsChanged", () => broadcast("crs"));
+
+  // Live sessions' transcript files are watched so the app's transcript pane
+  // stays in sync as the agent talks. The watched set follows session state;
+  // file changes broadcast a debounced "transcripts" invalidation and refresh
+  // the agent-generated session title (ai-title / session_info) — which also
+  // titles resumed sessions immediately, since their transcript already
+  // carries one.
+  const transcriptWatchers = new Map<string, ChokidarWatcher>();
+  const titleTimers = new Map<string, NodeJS.Timeout>();
+  let transcriptBroadcastTimer: NodeJS.Timeout | null = null;
+  const broadcastTranscripts = (): void => {
+    if (closing || transcriptBroadcastTimer !== null) return;
+    transcriptBroadcastTimer = setTimeout(() => {
+      transcriptBroadcastTimer = null;
+      broadcast("transcripts");
+    }, DIFF_DEBOUNCE_MS);
+  };
+  const refreshNativeTitle = (path: string, agent: string): void => {
+    const existing = titleTimers.get(path);
+    if (existing !== undefined) clearTimeout(existing);
+    titleTimers.set(
+      path,
+      setTimeout(() => {
+        titleTimers.delete(path);
+        void readFile(path, "utf8")
+          .then((content) => {
+            const title = extractTitle(agent, content);
+            if (title !== null && !closing) store.setNativeTitle(path, title);
+          })
+          .catch(() => {
+            // transcript unreadable right now; the next change retries
+          });
+      }, DIFF_DEBOUNCE_MS),
+    );
+  };
+  const syncTranscriptWatchers = (): void => {
+    if (closing) return;
+    const live = new Map(store.liveTranscripts().map(({ path, agent }) => [path, agent]));
+    for (const [path, watcher] of transcriptWatchers) {
+      if (!live.has(path)) {
+        void watcher.close();
+        transcriptWatchers.delete(path);
+      }
+    }
+    for (const [path, agent] of live) {
+      if (transcriptWatchers.has(path)) continue;
+      const watcher = watch(path, { ignoreInitial: true });
+      watcher.on("all", () => {
+        broadcastTranscripts();
+        refreshNativeTitle(path, agent);
+      });
+      watcher.on("error", () => {
+        // transcript may not exist yet; the sync on next session change retries
+        void watcher.close();
+        transcriptWatchers.delete(path);
+      });
+      transcriptWatchers.set(path, watcher);
+      refreshNativeTitle(path, agent);
+    }
+  };
+  store.events.on("changed", syncTranscriptWatchers);
+  syncTranscriptWatchers();
 
   const server = await new Promise<ServerType>((resolve, reject) => {
     const created = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () =>
@@ -158,7 +276,7 @@ export async function startDaemon(options?: {
         // The ignore check is async: by the time it resolves the daemon may
         // be shutting down or the repo untracked — re-check both.
         if (ignored || closing || !config.repos.includes(repo)) return;
-        for (const cwd of store.liveCwds(repo)) scheduleDiff(cwd);
+        for (const cwd of store.liveCwds(repo)) scheduleDiff(cwd, repo);
       })
       .catch((error: unknown) =>
         watchLog.warn({ repo, filename, error }, "gitignore match failed"),
@@ -241,6 +359,8 @@ export async function startDaemon(options?: {
     if (!path.endsWith("config.json")) return;
     void readOverfactorConfig().then((next) => {
       config = next;
+      worktreeRepoCache.clear();
+      void refreshRealRepoIndex();
       watchRepos(config.repos);
       broadcast("repos");
       watchLog.info({ repos: config.repos }, "config reloaded");
@@ -251,6 +371,11 @@ export async function startDaemon(options?: {
     closing = true;
     for (const timer of diffTimers.values()) clearTimeout(timer);
     diffTimers.clear();
+    if (transcriptBroadcastTimer !== null) clearTimeout(transcriptBroadcastTimer);
+    for (const timer of titleTimers.values()) clearTimeout(timer);
+    titleTimers.clear();
+    for (const watcher of transcriptWatchers.values()) void watcher.close();
+    transcriptWatchers.clear();
     for (const timer of rearmTimers) clearTimeout(timer);
     rearmTimers.clear();
     await configWatcher.close();

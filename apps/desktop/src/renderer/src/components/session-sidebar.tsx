@@ -1,4 +1,4 @@
-import type { LifecycleState, Session } from "@overfactor/sdk";
+import type { ChangeRequest, LifecycleState, Session } from "@overfactor/sdk";
 import { FolderPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
@@ -94,14 +94,37 @@ function RepoSection({ repos, onAddRepo, onRemoveRepo, addRepoError }: RepoSecti
 
 export function SessionSidebar({
   sessions,
+  crs,
   selectedId,
   onSelect,
   ...repoProps
 }: {
   sessions: Session[];
+  crs: ChangeRequest[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 } & RepoSectionProps) {
+  // Sidebar layout from the design mock: chats grouped under their CR, with
+  // an Ungrouped section for default-branch/unresolved sessions. CRs with no
+  // sessions are not shown.
+  const byCr = new Map<number, Session[]>();
+  const ungrouped: Session[] = [];
+  for (const session of sessions) {
+    if (session.crId === null) {
+      ungrouped.push(session);
+    } else {
+      byCr.set(session.crId, [...(byCr.get(session.crId) ?? []), session]);
+    }
+  }
+  const crGroups = crs
+    .filter((cr) => byCr.has(cr.id))
+    .map((cr) => ({ cr, sessions: byCr.get(cr.id) ?? [] }));
+  // Sessions whose CR row hasn't loaded yet fall back to Ungrouped.
+  const knownCrIds = new Set(crs.map((cr) => cr.id));
+  for (const [crId, orphaned] of byCr) {
+    if (!knownCrIds.has(crId)) ungrouped.push(...orphaned);
+  }
+
   return (
     <Sidebar>
       <SidebarHeader className="px-4 py-3">
@@ -109,48 +132,82 @@ export function SessionSidebar({
       </SidebarHeader>
       <SidebarContent>
         <RepoSection {...repoProps} />
-        <SidebarGroup>
-          <SidebarGroupLabel>Sessions</SidebarGroupLabel>
-          <SidebarGroupContent>
-            {sessions.length === 0 ? (
+        {sessions.length === 0 ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>Sessions</SidebarGroupLabel>
+            <SidebarGroupContent>
               <p className="px-2 py-4 text-xs text-muted-foreground">
                 No sessions yet. Start an agent in a tracked repo.
               </p>
-            ) : (
-              <SidebarMenu>
-                {sessions.map((session) => {
-                  const state = STATE_STYLES[session.state];
-                  return (
-                    <SidebarMenuItem key={session.id}>
-                      <SidebarMenuButton
-                        className="h-auto flex-col items-start gap-1 py-2"
-                        isActive={session.id === selectedId}
-                        onClick={() => onSelect(session.id)}
-                      >
-                        <span className="flex w-full items-center gap-2">
-                          <span
-                            className={cn("size-2 shrink-0 rounded-full", state.dot)}
-                            aria-label={state.label}
-                          />
-                          <span className="truncate text-sm font-medium">
-                            {session.title ?? "Untitled session"}
-                          </span>
-                        </span>
-                        <span className="flex w-full items-center justify-between gap-2 pl-4">
-                          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                            {AGENT_LABELS[session.agent]}
-                          </Badge>
-                          <DiffStats session={session} />
-                        </span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : (
+          <>
+            {crGroups.map(({ cr, sessions: crSessions }) => (
+              <SidebarGroup key={cr.id}>
+                <SidebarGroupLabel className="gap-1.5" title={`${cr.repoPath} · ${cr.branch}`}>
+                  <span className="shrink-0 font-semibold">CR-{cr.id}</span>
+                  <span className="truncate">· {cr.title}</span>
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SessionMenu sessions={crSessions} selectedId={selectedId} onSelect={onSelect} />
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ))}
+            {ungrouped.length > 0 && (
+              <SidebarGroup>
+                <SidebarGroupLabel>Ungrouped chats</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SessionMenu sessions={ungrouped} selectedId={selectedId} onSelect={onSelect} />
+                </SidebarGroupContent>
+              </SidebarGroup>
             )}
-          </SidebarGroupContent>
-        </SidebarGroup>
+          </>
+        )}
       </SidebarContent>
     </Sidebar>
+  );
+}
+
+function SessionMenu({
+  sessions,
+  selectedId,
+  onSelect,
+}: {
+  sessions: Session[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <SidebarMenu>
+      {sessions.map((session) => {
+        const state = STATE_STYLES[session.state];
+        return (
+          <SidebarMenuItem key={session.id}>
+            <SidebarMenuButton
+              className="h-auto flex-col items-start gap-1 py-2"
+              isActive={session.id === selectedId}
+              onClick={() => onSelect(session.id)}
+            >
+              <span className="flex w-full items-center gap-2">
+                <span
+                  className={cn("size-2 shrink-0 rounded-full", state.dot)}
+                  aria-label={state.label}
+                />
+                <span className="truncate text-sm font-medium">
+                  {session.title ?? "Untitled session"}
+                </span>
+              </span>
+              <span className="flex w-full items-center justify-between gap-2 pl-4">
+                <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                  {AGENT_LABELS[session.agent]}
+                </Badge>
+                <DiffStats session={session} />
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        );
+      })}
+    </SidebarMenu>
   );
 }

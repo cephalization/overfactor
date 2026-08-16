@@ -10,19 +10,40 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useSessionDiff } from "@/lib/daemon.ts";
 
 /**
+ * Same minimal scrollbar treatment as globals.css, injected into pierre's
+ * shadow roots (diff panes scroll horizontally, the tree vertically) where
+ * page CSS cannot reach. Theme tokens inherit across shadow boundaries.
+ */
+export const SCROLLBAR_CSS = `
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--foreground, #888) 18%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--foreground, #888) 30%, transparent);
+}
+::-webkit-scrollbar-button { display: none; }
+`;
+
+/**
  * Code surfaces are themed by pierre/shiki (never bridged onto shadcn
  * tokens); both follow the same OS color-scheme signal as the app shell.
  */
-const DIFF_OPTIONS_BASE = {
+export const DIFF_OPTIONS_BASE = {
   theme: { dark: "github-dark-default", light: "github-light-default" },
   themeType: "system",
   stickyHeader: true,
   lineDiffType: "word-alt",
+  unsafeCSS: SCROLLBAR_CSS,
 } as const;
 
 type DiffStyle = "unified" | "split";
 
-function fileLabel(file: { name?: string; prevName?: string }): string {
+export function fileLabel(file: { name?: string; prevName?: string }): string {
   return file.name ?? file.prevName ?? "unknown file";
 }
 
@@ -52,6 +73,7 @@ function ChangedFilesTree({ files }: { files: FileDiffMetadata[] }) {
   const { model } = useFileTree({
     initialExpansion: "open",
     flattenEmptyDirectories: true,
+    unsafeCSS: SCROLLBAR_CSS,
     paths,
     gitStatus,
     onSelectionChange: (selected) => {
@@ -70,17 +92,25 @@ function ChangedFilesTree({ files }: { files: FileDiffMetadata[] }) {
   return <FileTree model={model} style={{ height: "100%" }} />;
 }
 
-export function SessionDiff({ baseUrl, session }: { baseUrl: string; session: Session }) {
+/**
+ * Shared diff data for both review experiences; callers share one query cache
+ * entry per session, so All files and Curated review never double-fetch.
+ */
+export function useDiffFiles(baseUrl: string, session: Session) {
   const diff = useSessionDiff(baseUrl, session.id);
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified");
-  const [treeOpen, setTreeOpen] = useState(true);
-
   const files = useMemo(() => {
     if (diff.data?.patch === undefined || diff.data.patch === null) return [];
     return parsePatchFiles(diff.data.patch, `session-${session.id}`).flatMap(
       (parsed) => parsed.files,
     );
   }, [diff.data, session.id]);
+  return { diff, files };
+}
+
+export function SessionDiff({ baseUrl, session }: { baseUrl: string; session: Session }) {
+  const { diff, files } = useDiffFiles(baseUrl, session);
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified");
+  const [treeOpen, setTreeOpen] = useState(true);
 
   if (diff.isPending) {
     return (
@@ -147,7 +177,7 @@ export function SessionDiff({ baseUrl, session }: { baseUrl: string; session: Se
       <div className="flex items-start gap-4">
         {treeOpen && (
           <aside
-            className="sticky top-2 h-[calc(100svh-1rem)] w-60 shrink-0 self-start overflow-hidden"
+            className="sticky top-2 h-[calc(100svh-8rem)] w-60 shrink-0 self-start overflow-hidden"
             // Blend the tree into the page WITHOUT `transparent`: the tree's
             // middle-truncation masks clipped glyphs by painting --trees-bg
             // behind the "…" marker, so the value must be a real color.

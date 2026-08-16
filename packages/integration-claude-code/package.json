@@ -14,7 +14,8 @@
     ".": "./dist/index.mjs",
     "./hook": "./dist/hook.mjs",
     "./install": "./dist/install.mjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./transcript": "./dist/transcript.mjs"
   },
   "scripts": {
     "build": "vp pack",

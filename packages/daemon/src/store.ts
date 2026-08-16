@@ -1,8 +1,8 @@
-import type { DiffStats, HookEvent, LifecycleState, Session } from "@overfactor/sdk";
-import { sessionSchema } from "@overfactor/sdk";
-import { eq } from "drizzle-orm";
+import type { ChangeRequest, DiffStats, HookEvent, LifecycleState, Session } from "@overfactor/sdk";
+import { changeRequestSchema, sessionSchema } from "@overfactor/sdk";
+import { and, eq } from "drizzle-orm";
 import Emittery from "emittery";
-import { type Db, type SessionRow, sessions } from "./db.ts";
+import { type ChangeRequestRow, type Db, type SessionRow, changeRequests, sessions } from "./db.ts";
 
 const TITLE_MAX_LENGTH = 80;
 
@@ -13,7 +13,14 @@ function titleFromPrompt(prompt: string): string | null {
   return `${firstLine.slice(0, TITLE_MAX_LENGTH - 1)}…`;
 }
 
-function rowToSession(row: SessionRow): Session {
+/** "feat/rate-limit_ingest-api" → "rate limit ingest api" (editable later). */
+function titleFromBranch(branch: string): string {
+  const leaf = branch.includes("/") ? branch.slice(branch.indexOf("/") + 1) : branch;
+  const humanized = leaf.replaceAll(/[-_]+/g, " ").trim();
+  return humanized === "" ? branch : humanized;
+}
+
+function rowToSession(row: SessionRow, effectiveCrId: number | null): Session {
   return sessionSchema.parse({
     id: row.id,
     agent: row.agent,
@@ -22,6 +29,8 @@ function rowToSession(row: SessionRow): Session {
     cwd: row.cwd,
     repoPath: row.repoPath,
     transcriptPath: row.transcriptPath,
+    branch: row.branch,
+    crId: effectiveCrId,
     diff:
       row.filesChanged === null || row.insertions === null || row.deletions === null
         ? null
@@ -35,13 +44,27 @@ function rowToSession(row: SessionRow): Session {
   });
 }
 
+function rowToChangeRequest(row: ChangeRequestRow): ChangeRequest {
+  return changeRequestSchema.parse({
+    id: row.id,
+    repoPath: row.repoPath,
+    branch: row.branch,
+    title: row.title,
+    prNumber: row.prNumber,
+    prState: row.prState,
+    prUrl: row.prUrl,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
 /**
  * Session state, persisted in sqlite so sessions survive daemon restarts.
  * Emits `changed` after every mutation; the server broadcasts WS invalidations
- * off that signal.
+ * off that signal. `crsChanged` fires when the Change Request set mutates.
  */
 export class SessionStore {
-  readonly events = new Emittery<{ changed: undefined }>();
+  readonly events = new Emittery<{ changed: undefined; crsChanged: undefined }>();
 
   constructor(
     private readonly db: Db,
@@ -62,13 +85,15 @@ export class SessionStore {
             ? "ended"
             : "working";
 
+    const promptTitle = event.type === "user-prompt" ? titleFromPrompt(event.prompt) : null;
     if (existing === undefined) {
       this.db
         .insert(sessions)
         .values({
           id: event.sessionId,
           agent: event.agent,
-          title: event.type === "user-prompt" ? titleFromPrompt(event.prompt) : null,
+          title: promptTitle,
+          titleSource: promptTitle === null ? null : "prompt",
           state,
           cwd: event.cwd,
           repoPath,
@@ -85,8 +110,8 @@ export class SessionStore {
           cwd: event.cwd,
           repoPath,
           updatedAt: timestamp,
-          ...(event.type === "user-prompt" && existing.title === null
-            ? { title: titleFromPrompt(event.prompt) }
+          ...(promptTitle !== null && existing.title === null
+            ? { title: promptTitle, titleSource: "prompt" as const }
             : {}),
           ...(event.type === "session-start" ? { transcriptPath: event.transcriptPath } : {}),
         })
@@ -98,28 +123,37 @@ export class SessionStore {
   }
 
   /**
-   * Records diff stats for every session running in `cwd` (they share a
-   * worktree). A recompute that lands on identical stats is a no-op — no
-   * `updatedAt` churn and no WS invalidation for noise events (e.g. files the
-   * ignore matcher doesn't know about, like global-gitignore entries).
+   * Records worktree-derived state (diff stats, checked-out branch) for every
+   * session running in `cwd` (they share a worktree). A recompute that lands
+   * on identical values is a no-op — no `updatedAt` churn and no WS
+   * invalidation for noise events. Null stats/branch mean "could not resolve":
+   * the previous value is kept.
    */
-  setDiffForCwd(cwd: string, stats: DiffStats): void {
+  setWorktreeState(cwd: string, stats: DiffStats | null, branch: string | null): void {
     const rows = this.db.select().from(sessions).where(eq(sessions.cwd, cwd)).all();
-    const changed = rows.some(
-      (row) =>
-        row.filesChanged !== stats.filesChanged ||
-        row.insertions !== stats.insertions ||
-        row.deletions !== stats.deletions,
-    );
-    if (!changed) return;
+    const statsChanged =
+      stats !== null &&
+      rows.some(
+        (row) =>
+          row.filesChanged !== stats.filesChanged ||
+          row.insertions !== stats.insertions ||
+          row.deletions !== stats.deletions,
+      );
+    const branchChanged = branch !== null && rows.some((row) => row.branch !== branch);
+    if (!statsChanged && !branchChanged) return;
 
     const timestamp = this.now().toISOString();
     this.db
       .update(sessions)
       .set({
-        filesChanged: stats.filesChanged,
-        insertions: stats.insertions,
-        deletions: stats.deletions,
+        ...(stats === null
+          ? {}
+          : {
+              filesChanged: stats.filesChanged,
+              insertions: stats.insertions,
+              deletions: stats.deletions,
+            }),
+        ...(branch === null ? {} : { branch }),
         updatedAt: timestamp,
       })
       .where(eq(sessions.cwd, cwd))
@@ -127,13 +161,128 @@ export class SessionStore {
     void this.events.emit("changed");
   }
 
+  /**
+   * Finds or creates the Change Request for a repo branch (the automatic
+   * grouping unit). Title defaults to the humanized branch name.
+   */
+  ensureChangeRequest(repoPath: string, branch: string): ChangeRequest {
+    const existing = this.db
+      .select()
+      .from(changeRequests)
+      .where(and(eq(changeRequests.repoPath, repoPath), eq(changeRequests.branch, branch)))
+      .get();
+    if (existing !== undefined) return rowToChangeRequest(existing);
+
+    const timestamp = this.now().toISOString();
+    const inserted = this.db
+      .insert(changeRequests)
+      .values({
+        repoPath,
+        branch,
+        title: titleFromBranch(branch),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .returning()
+      .get();
+    void this.events.emit("crsChanged");
+    return rowToChangeRequest(inserted);
+  }
+
+  listChangeRequests(): ChangeRequest[] {
+    return this.db.select().from(changeRequests).all().map(rowToChangeRequest);
+  }
+
+  /** Pins a session to a CR (or clears the pin with null). Returns false for unknown sessions. */
+  pinSession(sessionId: string, crId: number | null): boolean {
+    const row = this.db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+    if (row === undefined) return false;
+    this.db
+      .update(sessions)
+      .set({ crId, updatedAt: this.now().toISOString() })
+      .where(eq(sessions.id, sessionId))
+      .run();
+    void this.events.emit("changed");
+    return true;
+  }
+
+  /** Effective CR: manual pin wins; else the CR matching the worktree branch. */
+  private effectiveCrId(row: SessionRow, autoByRepoBranch: Map<string, number>): number | null {
+    if (row.crId !== null) return row.crId;
+    if (row.branch === null) return null;
+    return autoByRepoBranch.get(`${row.repoPath}\0${row.branch}`) ?? null;
+  }
+
+  private autoCrIndex(): Map<string, number> {
+    const index = new Map<string, number>();
+    for (const cr of this.db.select().from(changeRequests).all()) {
+      index.set(`${cr.repoPath}\0${cr.branch}`, cr.id);
+    }
+    return index;
+  }
+
   list(): Session[] {
-    return this.db.select().from(sessions).all().map(rowToSession);
+    const index = this.autoCrIndex();
+    return this.db
+      .select()
+      .from(sessions)
+      .all()
+      .map((row) => rowToSession(row, this.effectiveCrId(row, index)));
   }
 
   get(id: string): Session | null {
     const row = this.db.select().from(sessions).where(eq(sessions.id, id)).get();
-    return row === undefined ? null : rowToSession(row);
+    return row === undefined
+      ? null
+      : rowToSession(row, this.effectiveCrId(row, this.autoCrIndex()));
+  }
+
+  /** Distinct transcript paths (with their agent) of live sessions. */
+  liveTranscripts(): Array<{ path: string; agent: string }> {
+    const byPath = new Map<string, string>();
+    for (const row of this.db.select().from(sessions).all()) {
+      if (row.state === "ended" || row.transcriptPath === null) continue;
+      byPath.set(row.transcriptPath, row.agent);
+    }
+    return [...byPath.entries()].map(([path, agent]) => ({ path, agent }));
+  }
+
+  /**
+   * Applies an agent-generated title to sessions using this transcript.
+   * Precedence: never overrides a manual rename; replaces prompt-derived and
+   * stale native titles.
+   */
+  setNativeTitle(transcriptPath: string, title: string): void {
+    const rows = this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.transcriptPath, transcriptPath))
+      .all();
+    const targets = rows.filter((row) => row.titleSource !== "manual" && row.title !== title);
+    if (targets.length === 0) return;
+
+    const timestamp = this.now().toISOString();
+    for (const row of targets) {
+      this.db
+        .update(sessions)
+        .set({ title, titleSource: "native", updatedAt: timestamp })
+        .where(eq(sessions.id, row.id))
+        .run();
+    }
+    void this.events.emit("changed");
+  }
+
+  /** Manual rename: wins over every other title source. */
+  renameSession(sessionId: string, title: string): boolean {
+    const row = this.db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+    if (row === undefined) return false;
+    this.db
+      .update(sessions)
+      .set({ title, titleSource: "manual", updatedAt: this.now().toISOString() })
+      .where(eq(sessions.id, sessionId))
+      .run();
+    void this.events.emit("changed");
+    return true;
   }
 
   /** Distinct cwds of sessions that are still live (not ended), optionally scoped to one repo. */

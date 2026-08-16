@@ -60,7 +60,7 @@ describe("repo config mutations", () => {
 describe("repo routes", () => {
   function makeApp() {
     const store = new SessionStore(openDb(":memory:"));
-    return createApp({ store, repos: () => [] });
+    return createApp({ store, resolveRepo: async () => null });
   }
 
   it("round-trips add, list, and remove", async () => {

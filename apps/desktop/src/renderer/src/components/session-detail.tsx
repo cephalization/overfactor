@@ -1,39 +1,154 @@
 import type { Session } from "@overfactor/sdk";
+import { PanelRightOpen, Pencil } from "lucide-react";
+import { useState } from "react";
+import { CuratedReview } from "@/components/curated-review.tsx";
 import { SessionDiff } from "@/components/session-diff.tsx";
 import { AGENT_LABELS, DiffStats, STATE_STYLES } from "@/components/session-sidebar.tsx";
+import { TranscriptPanel } from "@/components/transcript-panel.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable.tsx";
+import { Input } from "@/components/ui/input.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
+import { useRenameSession } from "@/lib/daemon.ts";
 import { cn } from "@/lib/utils.ts";
 
+type ReviewMode = "all" | "curated";
+
 /**
- * The review surface for one session: header with identity and lifecycle,
- * then the live diff of its worktree. The transcript joins in a later slice.
+ * Inline-editable session title: click the pencil (or double-click the
+ * title), Enter saves, Escape cancels. Manual renames win over agent titles.
+ */
+function EditableTitle({ baseUrl, session }: { baseUrl: string; session: Session }) {
+  const rename = useRenameSession(baseUrl);
+  const [draft, setDraft] = useState<string | null>(null);
+
+  if (draft !== null) {
+    const commit = (): void => {
+      const title = draft.trim();
+      if (title !== "" && title !== session.title) {
+        rename.mutate({ sessionId: session.id, title });
+      }
+      setDraft(null);
+    };
+    return (
+      <Input
+        autoFocus
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape") setDraft(null);
+        }}
+        onBlur={() => setDraft(null)}
+        className="h-9 max-w-xl text-xl font-semibold tracking-tight md:text-xl"
+      />
+    );
+  }
+
+  return (
+    <div className="group flex items-center gap-2">
+      <h1
+        className="cursor-text text-xl font-semibold tracking-tight"
+        onDoubleClick={() => setDraft(session.title ?? "")}
+        title="Double-click to rename"
+      >
+        {session.title ?? "Untitled session"}
+      </h1>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7 opacity-0 transition-opacity group-hover:opacity-100"
+        onClick={() => setDraft(session.title ?? "")}
+        title="Rename session"
+      >
+        <Pencil />
+        <span className="sr-only">Rename session</span>
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The review surface for one session: the diff experiences on the left
+ * ("All files" or "Curated review"), the live transcript in a resizable
+ * panel on the right.
  */
 export function SessionDetail({ baseUrl, session }: { baseUrl: string; session: Session }) {
   const state = STATE_STYLES[session.state];
+  const [mode, setMode] = useState<ReviewMode>("all");
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
+
   return (
-    // Fluid up to a cap chosen for split diffs: ~2×85-col panes plus the
-    // file tree (~110rem). Unified mode just enjoys the extra room.
-    <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-5 p-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold tracking-tight">
-          {session.title ?? "Untitled session"}
-        </h1>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className={cn("size-2 rounded-full", state.dot)} />
-          <span className="text-sm text-muted-foreground">{state.label}</span>
-          <Badge variant="outline">{AGENT_LABELS[session.agent]}</Badge>
-          <DiffStats session={session} />
-          <span className="font-mono text-xs text-muted-foreground" title={session.cwd}>
-            {session.repoPath}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            · active {new Date(session.updatedAt).toLocaleTimeString()}
-          </span>
+    <ResizablePanelGroup orientation="horizontal" className="h-full">
+      <ResizablePanel defaultSize={62} minSize={35}>
+        <div className="h-full overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-4 p-6">
+            <div className="flex flex-col gap-2">
+              <EditableTitle baseUrl={baseUrl} session={session} />
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className={cn("size-2 rounded-full", state.dot)} />
+                <span className="text-sm text-muted-foreground">{state.label}</span>
+                <Badge variant="outline">{AGENT_LABELS[session.agent]}</Badge>
+                <DiffStats session={session} />
+                <span className="font-mono text-xs text-muted-foreground" title={session.cwd}>
+                  {session.repoPath}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant={mode === "all" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setMode("all")}
+              >
+                All files
+              </Button>
+              <Button
+                variant={mode === "curated" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setMode("curated")}
+              >
+                Curated review
+              </Button>
+              {!transcriptOpen && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setTranscriptOpen(true)}
+                  title="Show transcript"
+                >
+                  <PanelRightOpen />
+                  Transcript
+                </Button>
+              )}
+            </div>
+            <Separator />
+            {mode === "all" ? (
+              <SessionDiff baseUrl={baseUrl} session={session} />
+            ) : (
+              <CuratedReview baseUrl={baseUrl} session={session} />
+            )}
+          </div>
         </div>
-      </div>
-      <Separator />
-      <SessionDiff baseUrl={baseUrl} session={session} />
-    </div>
+      </ResizablePanel>
+      {transcriptOpen && (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={38} minSize={20}>
+            <TranscriptPanel
+              baseUrl={baseUrl}
+              session={session}
+              onCollapse={() => setTranscriptOpen(false)}
+            />
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
   );
 }

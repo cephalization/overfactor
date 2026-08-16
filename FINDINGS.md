@@ -137,6 +137,26 @@ A live probe against this repo verified that a `*.local` event leaves session `u
 
 Watch-side memory is solved; **diff-side is the next constraint**: `computeDiffStats` runs in-process, and just-git's pure-TS `diff HEAD --numstat` on the Phoenix checkout (7.2k tracked files, 13 GB) takes ~1.3 s with a ~640 MB peak RSS in an isolated measurement (system git: 45 ms). No session has run in Phoenix yet, so the daemon hasn't paid this — but the first agent session there will spike daemon RSS per debounced recompute. When that lands, move diff computation to a subprocess (or system-git it for large repos) rather than letting V8 hold the spike.
 
+## 2026-08-15 — implemented — Change Request foundation (goal 3, stage 1)
+
+Sessions now group into CRs automatically, keyed by **(tracked repo, worktree branch)**. Sessions on the repo's default branch (origin/HEAD, falling back to main/master) stay in "Ungrouped chats", matching the design mock. A manual pin (`POST /sessions/:id/cr`) overrides automatic grouping; effective CR is computed at read time (pin ?? branch match). Constraints discovered:
+
+- **Worktree git reads moved to system git subprocesses**, superseding "just-git for worktree diffs": on a 7.2k-file repo just-git cost ~1.5s/~660MB in-process vs system git's ~40ms/~10MB, and it misreports committed symlinks (upstream: https://github.com/blindmansion/just-git/issues/4, maintainer aware). Decided (Tony): just-git **dogfooding concentrates on the sandbox slice** — worktree creation and the embeddable server, the workload v2 was vendored for — rather than the daemon's read-only hot path. The daemon↔just-git dependency edge returns when sandboxes land.
+- **`--no-ext-diff` is mandatory** on every `git diff` the daemon runs: users configure `diff.external` (this machine: difftastic), which replaces the unified patch with tool output the renderer cannot parse. Caught by the app tests running under real user gitconfig.
+- **Linked `git worktree` checkouts live outside the tracked repo root**, so events from them fail prefix matching. The resolver falls back to `git rev-parse --git-common-dir` to find the main worktree — and must compare via a **realpath index** of tracked repos, because git reports physical paths while config may store symlinked ones (/tmp vs /private/tmp).
+- Old daemon.db files are migrated in place (PRAGMA table_info + ALTER TABLE) for the new `branch`/`cr_id` session columns; the `change_requests` table is keyed unique on (repo_path, branch).
+- Deferred to the next stages: GitHub PR detection (gh→octokit) onto the CR's `pr_*` columns, the pin/chat-selector UI, a CR-level pane, and file-watching inside linked worktrees (their diffs currently refresh on hook events only).
+
+## 2026-08-16 — implemented — transcript sync + review-mode toggle
+
+The session detail is now a two-pane review surface: diff experiences on the left ("All files" | "Curated review"), the live transcript in a resizable right panel (shadcn resizable / react-resizable-panels; note its current API takes `orientation`, not `direction`).
+
+- **Transcript parsing is agent-owned**: `@overfactor/integration-claude-code/transcript` and `@overfactor/integration-pi/transcript` parse their agents' native files into the SDK's neutral `TranscriptEntry` (loose schemas — formats grow fields). Claude Code: skip `isMeta`/`isSidechain` lines and thinking blocks; map tool_use ids → names so tool_results are labeled. Pi (v3): `message` lines with roles user/assistant/toolResult, `toolCall` blocks, `compaction` → system entry; `custom_message` context injections skipped.
+- The daemon serves a parsed tail (`GET /sessions/:id/transcript`, last 200 entries + totalCount) and watches live sessions' transcript files, broadcasting a debounced `transcripts` WS invalidation — verified: appended transcript lines appear in the panel without refresh.
+- **Markdown via streamdown**, which requires a tailwind `@source` directive pointing at its dist (see globals.css); tool entries render as labeled code cards. Panel pins to bottom only while the user is already near it.
+- **Scroll architecture changed**: the app is now viewport-bound (`SidebarInset h-svh overflow-hidden`) and the diff pane is its own scroll container — position:sticky (file tree, curated group summaries) binds to the pane. The earlier "document is the scroll container" comment no longer applies.
+- Curated review's directory grouping is an explicit structural stand-in: the component's shape (groups → sticky summary + files + mark-reviewed) is what Guided Review's generated intent groups will fill.
+
 ## 2026-08-15 — note — docs: reading design.html
 
 `design.html` is a self-extracting bundle, not plain HTML — content lives in `<script type="__bundler/manifest">` (per-asset gzip+base64 JSON) and `<script type="__bundler/template">` (JSON-encoded HTML string). To read it without a browser: parse those two blocks, base64-decode + gunzip manifest entries, `json.loads` the template. The rendered doc is the internal working spec (concepts, flow, UI mock, decisions); the prior marketing draft is kept separately as "Switchyard Product Sheet".

@@ -32,12 +32,34 @@ export const sessionSchema = z.object({
   /** Root of the configured repo containing `cwd`. */
   repoPath: z.string().min(1),
   transcriptPath: z.string().nullable(),
+  /** Branch checked out in the session's worktree; null when detached/unknown. */
+  branch: z.string().nullable(),
+  /**
+   * Effective Change Request id: the manual pin when set, else the CR derived
+   * from the worktree branch; null for ungrouped sessions (default branch,
+   * detached, or branch not yet resolved).
+   */
+  crId: z.int().positive().nullable(),
   /** `git diff` stats of the session's worktree; null until first computed. */
   diff: diffStatsSchema.nullable(),
   startedAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
 export type Session = z.infer<typeof sessionSchema>;
+
+/** A Change Request: sessions grouped into a unit of work, keyed by repo+branch. */
+export const changeRequestSchema = z.object({
+  id: z.int().positive(),
+  repoPath: z.string().min(1),
+  branch: z.string().min(1),
+  title: z.string().min(1),
+  prNumber: z.int().positive().nullable(),
+  prState: z.string().nullable(),
+  prUrl: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type ChangeRequest = z.infer<typeof changeRequestSchema>;
 
 const hookEventBase = {
   sessionId: z.string().min(1),
@@ -73,9 +95,34 @@ export const sessionDiffSchema = z.object({
 });
 export type SessionDiff = z.infer<typeof sessionDiffSchema>;
 
+/**
+ * One rendered transcript entry, normalized across agents. Integration
+ * packages parse their agent's native transcript format into these.
+ */
+export const transcriptEntrySchema = z.object({
+  id: z.string().min(1),
+  role: z.enum(["user", "assistant", "tool", "system"]),
+  /** Markdown body; huge tool output is truncated server-side. */
+  markdown: z.string(),
+  toolName: z.string().optional(),
+  timestamp: z.iso.datetime().optional(),
+});
+export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>;
+
+/** Response of `GET /sessions/:id/transcript` (tail of the conversation). */
+export const sessionTranscriptSchema = z.object({
+  entries: z.array(transcriptEntrySchema),
+  /** Total entries in the transcript; entries may be a tail of this. */
+  totalCount: z.int().nonnegative(),
+});
+export type SessionTranscript = z.infer<typeof sessionTranscriptSchema>;
+
 /** Messages the daemon pushes to app subscribers over WebSocket. */
 export const wsServerMessageSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("invalidate"), collection: z.enum(["sessions", "repos"]) }),
+  z.object({
+    type: z.literal("invalidate"),
+    collection: z.enum(["sessions", "repos", "crs", "transcripts"]),
+  }),
 ]);
 export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
 

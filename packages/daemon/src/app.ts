@@ -1,6 +1,10 @@
+import { readFile } from "node:fs/promises";
 import { zValidator } from "@hono/zod-validator";
-import type { HookEvent } from "@overfactor/sdk";
+import { parseClaudeTranscript } from "@overfactor/integration-claude-code/transcript";
+import { parsePiTranscript } from "@overfactor/integration-pi/transcript";
+import type { AgentKind, HookEvent, TranscriptEntry } from "@overfactor/sdk";
 import { hookEventSchema, repoPathRequestSchema } from "@overfactor/sdk";
+import { z } from "zod";
 import { readOverfactorConfig } from "@overfactor/sdk/node";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -10,6 +14,13 @@ import { addRepo, removeRepo } from "./repos.ts";
 import type { SessionStore } from "./store.ts";
 
 export const DAEMON_VERSION = "0.0.0";
+
+const TRANSCRIPT_TAIL_LENGTH = 200;
+
+const TRANSCRIPT_PARSERS: Record<AgentKind, (content: string) => TranscriptEntry[]> = {
+  "claude-code": parseClaudeTranscript,
+  pi: parsePiTranscript,
+};
 
 /** True when `cwd` is `repo` or a directory inside it. */
 export function cwdInRepo(cwd: string, repo: string): boolean {
@@ -29,8 +40,12 @@ export function resolveRepoForCwd(repos: string[], cwd: string): string | null {
 
 export interface AppDeps {
   store: SessionStore;
-  /** Current configured repos; read per-request so config reloads apply live. */
-  repos: () => string[];
+  /**
+   * Maps an event cwd to its tracked repo (or null to drop the event).
+   * The server's resolver also maps linked `git worktree` checkouts — whose
+   * paths live outside the tracked repo root — back to the tracked repo.
+   */
+  resolveRepo: (cwd: string) => Promise<string | null>;
   /** Called after an event is accepted (diff recompute scheduling). */
   onEvent?: (event: HookEvent, repoPath: string) => void;
   /** Called when an event is dropped because its cwd is in no tracked repo. */
@@ -58,6 +73,47 @@ export function createApp(deps: AppDeps) {
         c.json({ ok: true as const, version: DAEMON_VERSION, pid: process.pid }),
       )
       .get("/sessions", (c) => c.json(deps.store.list()))
+      .get("/crs", (c) => c.json(deps.store.listChangeRequests()))
+      // Manual rename: wins over agent-generated and prompt-derived titles.
+      .post(
+        "/sessions/:id/title",
+        zValidator("json", z.object({ title: z.string().trim().min(1).max(200) })),
+        (c) => {
+          const renamed = deps.store.renameSession(c.req.param("id"), c.req.valid("json").title);
+          if (!renamed) return c.json({ error: "unknown-session" as const }, 404);
+          return c.json({ ok: true as const });
+        },
+      )
+      // Manual pin: overrides automatic branch grouping; null clears the pin.
+      .post(
+        "/sessions/:id/cr",
+        zValidator("json", z.object({ crId: z.int().positive().nullable() })),
+        (c) => {
+          const pinned = deps.store.pinSession(c.req.param("id"), c.req.valid("json").crId);
+          if (!pinned) return c.json({ error: "unknown-session" as const }, 404);
+          return c.json({ ok: true as const });
+        },
+      )
+      // Transcript tail, parsed on demand from the agent's own transcript
+      // file by the agent's integration package.
+      .get("/sessions/:id/transcript", async (c) => {
+        const session = deps.store.get(c.req.param("id"));
+        if (session === null) {
+          return c.json({ error: "unknown-session" as const }, 404);
+        }
+        if (session.transcriptPath === null) {
+          return c.json({ entries: [] as TranscriptEntry[], totalCount: 0 });
+        }
+        const raw = await readFile(session.transcriptPath, "utf8").catch(() => null);
+        if (raw === null) {
+          return c.json({ entries: [] as TranscriptEntry[], totalCount: 0 });
+        }
+        const entries = TRANSCRIPT_PARSERS[session.agent](raw);
+        return c.json({
+          entries: entries.slice(-TRANSCRIPT_TAIL_LENGTH),
+          totalCount: entries.length,
+        });
+      })
       // Full patch, computed on demand — never persisted. Scope matches the
       // stats: staged + unstaged vs HEAD of the session's worktree.
       .get("/sessions/:id/diff", async (c) => {
@@ -67,9 +123,9 @@ export function createApp(deps: AppDeps) {
         }
         return c.json({ patch: await computeDiffPatch(session.cwd) });
       })
-      .post("/events", zValidator("json", hookEventSchema), (c) => {
+      .post("/events", zValidator("json", hookEventSchema), async (c) => {
         const event = c.req.valid("json");
-        const repoPath = resolveRepoForCwd(deps.repos(), event.cwd);
+        const repoPath = await deps.resolveRepo(event.cwd);
         if (repoPath === null) {
           deps.onDrop?.(event);
           return c.json({ accepted: false as const, reason: "unconfigured-repo" as const }, 202);

@@ -7,7 +7,7 @@ import { SessionStore } from "../src/store.ts";
 
 function makeApp(repos: string[]) {
   const store = new SessionStore(openDb(":memory:"));
-  const app = createApp({ store, repos: () => repos });
+  const app = createApp({ store, resolveRepo: async (cwd) => resolveRepoForCwd(repos, cwd) });
   return { app, store };
 }
 
@@ -92,6 +92,44 @@ describe("daemon app", () => {
 
     const missing = await app.request("/sessions/nope/diff");
     expect(missing.status).toBe(404);
+  });
+
+  it("serves a parsed transcript tail and 404s unknown sessions", async () => {
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "overfactor-transcript-"));
+    const transcriptPath = path.join(dir, "t.jsonl");
+    await writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({ type: "user", uuid: "u1", message: { content: "hello agent" } }),
+        JSON.stringify({
+          type: "assistant",
+          uuid: "a1",
+          message: { role: "assistant", content: [{ type: "text", text: "hello human" }] },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const { app } = makeApp(["/repo"]);
+    await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...startEvent, transcriptPath }),
+    });
+
+    const response = await app.request("/sessions/sess-1/transcript");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      entries: Array<{ markdown: string }>;
+      totalCount: number;
+    };
+    expect(body.totalCount).toBe(2);
+    expect(body.entries.map((e) => e.markdown)).toEqual(["hello agent", "hello human"]);
+
+    expect((await app.request("/sessions/nope/transcript")).status).toBe(404);
   });
 
   it("reports health", async () => {

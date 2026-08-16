@@ -36,7 +36,6 @@
     "emittery": "catalog:",
     "hono": "catalog:",
     "ignore": "catalog:",
-    "just-git": "workspace:*",
     "pino": "catalog:",
     "zod": "catalog:"
   },
