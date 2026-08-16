@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { daemonInfoSchema, hookEventSchema, sessionSchema } from "../src/index.ts";
+import {
+  daemonInfoSchema,
+  hookEventSchema,
+  sessionSchema,
+  transcriptEntrySchema,
+} from "../src/index.ts";
 
 describe("hookEventSchema", () => {
   it("accepts a session-start event", () => {
@@ -69,6 +74,20 @@ describe("sessionSchema", () => {
       updatedAt: "2026-08-15T12:01:00.000Z",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("transcriptEntrySchema", () => {
+  it("accepts tool invocation metadata", () => {
+    const entry = transcriptEntrySchema.parse({
+      id: "entry-1",
+      role: "tool",
+      markdown: "```json\n{}\n```",
+      toolName: "read",
+      toolCallId: "call-1",
+      toolPhase: "call",
+    });
+    expect(entry.toolCallId).toBe("call-1");
   });
 });
 

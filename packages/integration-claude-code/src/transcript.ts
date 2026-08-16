@@ -111,17 +111,23 @@ export function parseClaudeTranscript(content: string): TranscriptEntry[] {
           id: entryId,
           role: "tool",
           toolName: block.name,
+          toolCallId: block.id,
+          toolPhase: "call",
           markdown: toolUseMarkdown(block.input),
           timestamp,
         });
       } else if (block.type === "tool_result") {
         const text = flattenToolResult(block.content);
-        if (text.trim() === "") return;
         entries.push({
           id: entryId,
           role: "tool",
           toolName: block.tool_use_id !== undefined ? toolNames.get(block.tool_use_id) : undefined,
-          markdown: `\`\`\`\n${truncate(text, MAX_TOOL_INPUT_LENGTH)}\n\`\`\``,
+          toolCallId: block.tool_use_id,
+          toolPhase: "result",
+          markdown:
+            text.trim() === ""
+              ? "_No output._"
+              : `\`\`\`\n${truncate(text, MAX_TOOL_INPUT_LENGTH)}\n\`\`\``,
           timestamp,
         });
       }

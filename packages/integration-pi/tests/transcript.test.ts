@@ -31,7 +31,12 @@ describe("parsePiTranscript", () => {
         {
           type: "message",
           id: "m3",
-          message: { role: "toolResult", content: [{ type: "text", text: "const x = 1;" }] },
+          message: {
+            role: "toolResult",
+            toolCallId: "c1",
+            toolName: "read",
+            content: [{ type: "text", text: "const x = 1;" }],
+          },
         },
         { type: "custom_message", customType: "github-issue-context", content: "injected" },
         { type: "compaction", id: "cp1", summary: "## Goal\nShip it" },
@@ -40,7 +45,16 @@ describe("parsePiTranscript", () => {
 
     expect(entries.map((e) => e.role)).toEqual(["user", "assistant", "tool", "tool", "system"]);
     expect(entries[0]?.markdown).toBe("Review #14949");
-    expect(entries[2]).toMatchObject({ toolName: "read" });
+    expect(entries[2]).toMatchObject({
+      toolName: "read",
+      toolCallId: "c1",
+      toolPhase: "call",
+    });
+    expect(entries[3]).toMatchObject({
+      toolName: "read",
+      toolCallId: "c1",
+      toolPhase: "result",
+    });
     expect(entries[3]?.markdown).toContain("const x = 1;");
     expect(entries[4]?.markdown).toContain("Session compacted");
   });

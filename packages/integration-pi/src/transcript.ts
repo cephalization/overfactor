@@ -15,6 +15,7 @@ const MAX_TOOL_LENGTH = 600;
 const contentBlockSchema = z.looseObject({
   type: z.string(),
   text: z.string().optional(),
+  id: z.string().optional(),
   name: z.string().optional(),
   arguments: z.unknown().optional(),
 });
@@ -28,6 +29,8 @@ const lineSchema = z.looseObject({
   message: z
     .looseObject({
       role: z.string().optional(),
+      toolCallId: z.string().optional(),
+      toolName: z.string().optional(),
       content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
     })
     .optional(),
@@ -51,6 +54,7 @@ function roleFor(piRole: string | undefined): TranscriptEntry["role"] | null {
 
 export function parsePiTranscript(content: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
+  const toolNames = new Map<string, string>();
   let lineNumber = 0;
 
   for (const rawLine of content.split("\n")) {
@@ -79,14 +83,32 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
     const role = roleFor(parsed.message?.role);
     if (role === null) continue;
     const messageContent = parsed.message?.content;
+    const resultCallId = parsed.message?.toolCallId;
+    const resultToolName =
+      parsed.message?.toolName ??
+      (resultCallId === undefined ? undefined : toolNames.get(resultCallId));
 
     if (typeof messageContent === "string") {
-      if (messageContent.trim() === "") continue;
-      entries.push({ id, role, markdown: truncate(messageContent), timestamp });
+      if (messageContent.trim() === "" && role !== "tool") continue;
+      entries.push({
+        id,
+        role,
+        markdown:
+          messageContent.trim() === ""
+            ? "_No output._"
+            : role === "tool"
+              ? `\`\`\`\n${truncate(messageContent, MAX_TOOL_LENGTH)}\n\`\`\``
+              : truncate(messageContent),
+        ...(role === "tool"
+          ? { toolName: resultToolName, toolCallId: resultCallId, toolPhase: "result" as const }
+          : {}),
+        timestamp,
+      });
       continue;
     }
     if (!Array.isArray(messageContent)) continue;
 
+    let resultAdded = false;
     messageContent.forEach((block: ContentBlock, index) => {
       const entryId = `${id}:${index}`;
       if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
@@ -94,7 +116,16 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
           role === "tool"
             ? `\`\`\`\n${truncate(block.text, MAX_TOOL_LENGTH)}\n\`\`\``
             : truncate(block.text);
-        entries.push({ id: entryId, role, markdown, timestamp });
+        entries.push({
+          id: entryId,
+          role,
+          markdown,
+          ...(role === "tool"
+            ? { toolName: resultToolName, toolCallId: resultCallId, toolPhase: "result" as const }
+            : {}),
+          timestamp,
+        });
+        if (role === "tool") resultAdded = true;
       } else if (block.type === "toolCall" && block.name !== undefined) {
         let serialized: string;
         try {
@@ -102,15 +133,29 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
         } catch {
           serialized = "";
         }
+        if (block.id !== undefined) toolNames.set(block.id, block.name);
         entries.push({
           id: entryId,
           role: "tool",
           toolName: block.name,
+          toolCallId: block.id,
+          toolPhase: "call",
           markdown: `\`\`\`json\n${truncate(serialized, MAX_TOOL_LENGTH)}\n\`\`\``,
           timestamp,
         });
       }
     });
+    if (role === "tool" && !resultAdded) {
+      entries.push({
+        id: `${id}:result`,
+        role: "tool",
+        toolName: resultToolName,
+        toolCallId: resultCallId,
+        toolPhase: "result",
+        markdown: "_No output._",
+        timestamp,
+      });
+    }
   }
   return entries;
 }

@@ -9,6 +9,7 @@
     "dev": "node -e \"require('electron')\" && electron-vite dev -w",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "test": "vp test",
     "check": "vp check"
   },
   "dependencies": {
@@ -42,6 +43,7 @@
     "tw-animate-css": "catalog:",
     "typescript": "catalog:",
     "vite": "^7.3.6",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   }
 }

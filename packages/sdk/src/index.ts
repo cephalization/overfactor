@@ -105,6 +105,10 @@ export const transcriptEntrySchema = z.object({
   /** Markdown body; huge tool output is truncated server-side. */
   markdown: z.string(),
   toolName: z.string().optional(),
+  /** Stable native id shared by a tool invocation and its result. */
+  toolCallId: z.string().optional(),
+  /** Distinguishes invocations from results so the renderer can group runs. */
+  toolPhase: z.enum(["call", "result"]).optional(),
   timestamp: z.iso.datetime().optional(),
 });
 export type TranscriptEntry = z.infer<typeof transcriptEntrySchema>;

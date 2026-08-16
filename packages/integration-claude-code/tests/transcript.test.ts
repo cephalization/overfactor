@@ -44,10 +44,45 @@ describe("parseClaudeTranscript", () => {
       markdown: "Fix the bug",
       timestamp: "2026-08-16T10:00:00.000Z",
     });
-    expect(entries[2]).toMatchObject({ toolName: "Bash" });
+    expect(entries[2]).toMatchObject({
+      toolName: "Bash",
+      toolCallId: "t1",
+      toolPhase: "call",
+    });
     expect(entries[2]?.markdown).toContain('"command":"ls"');
-    expect(entries[3]).toMatchObject({ toolName: "Bash" });
+    expect(entries[3]).toMatchObject({
+      toolName: "Bash",
+      toolCallId: "t1",
+      toolPhase: "result",
+    });
     expect(entries[3]?.markdown).toContain("file.ts");
+  });
+
+  it("keeps empty tool results so calls can be marked complete", () => {
+    const entries = parseClaudeTranscript(
+      jsonl([
+        {
+          type: "assistant",
+          uuid: "a1",
+          message: {
+            content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+          },
+        },
+        {
+          type: "user",
+          uuid: "u1",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "t1", content: "" }],
+          },
+        },
+      ]),
+    );
+
+    expect(entries[1]).toMatchObject({
+      toolCallId: "t1",
+      toolPhase: "result",
+      markdown: "_No output._",
+    });
   });
 
   it("skips meta lines, sidechains, and malformed lines", () => {
