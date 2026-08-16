@@ -64,9 +64,12 @@ function Connected({ info }: { info: DaemonInfo }) {
             Connected to daemon on port {info.port}
           </span>
         </header>
-        <main className="flex flex-1 overflow-y-auto">
+        {/* The document is the scroll container — an overflow-auto ancestor
+            that never actually scrolls would capture and break position:sticky
+            (the diff view's file tree relies on it). */}
+        <main className="flex flex-1">
           {selected !== null ? (
-            <SessionDetail session={selected} />
+            <SessionDetail baseUrl={baseUrl} session={selected} />
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <p className="text-sm text-muted-foreground">Select a session to see its details.</p>

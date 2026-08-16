@@ -4,6 +4,7 @@ import {
   daemonInfoSchema,
   overfactorConfigSchema,
   type Session,
+  sessionDiffSchema,
   sessionSchema,
   wsServerMessageSchema,
 } from "@overfactor/sdk";
@@ -131,5 +132,23 @@ export function useRemoveRepo(baseUrl: string) {
       await createDaemonClient(baseUrl).repos.$delete({ json: { path } });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["repos"] }),
+  });
+}
+
+/**
+ * Full patch for one session, computed by the daemon on demand. The queryKey
+ * lives under the "sessions" prefix on purpose: the daemon's WS "sessions"
+ * invalidation (any session/diff-stats change) refetches it too.
+ */
+export function useSessionDiff(baseUrl: string, sessionId: string) {
+  return useQuery({
+    queryKey: ["sessions", baseUrl, "diff", sessionId],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).sessions[":id"].diff.$get({
+        param: { id: sessionId },
+      });
+      if (!response.ok) throw new Error(`diff request failed (${response.status})`);
+      return sessionDiffSchema.parse(await response.json());
+    },
   });
 }

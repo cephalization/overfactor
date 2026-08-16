@@ -113,7 +113,7 @@ Slice one is built: `packages/sdk`, `packages/daemon` (with `overfactor` CLI), `
 
 ## 2026-08-15 — implemented — Pi integration
 
-`packages/integration-pi` is a Pi package loaded project-locally through `.pi/settings.json`; the extension source remains in the repo and hot-reloads with Pi's `/reload`. It uses Pi 0.82.1's native lifecycle events rather than transcript polling:
+`packages/integration-pi` is a Pi package installed **user-level** via `overfactor install pi`, which adds the package path to `~/.pi/agent/settings.json` (Pi's default install target) — sessions report from every repo, not just this one. The original project-local `.pi/settings.json` install was a trap: it only loaded the extension for Pi sessions inside the Overfactor repo, so sessions in other tracked repos silently emitted nothing. The extension source loads from the repo path, so `/reload` still picks up local changes while developing it. It uses Pi 0.82.1's native lifecycle events rather than transcript polling:
 
 - `session_start` emits `session-start`, followed by `stopped` when Pi starts idle; `before_agent_start` emits the title-bearing `user-prompt` event only after input handling/template expansion has actually produced an agent run.
 - `agent_start` and `tool_execution_start` mark work active; `agent_settled` (not `agent_end`) marks the session idle because it fires only after retries, compaction, and queued continuations finish.

@@ -5,6 +5,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { installClaudeCodeIntegration } from "@overfactor/integration-claude-code/install";
+import { installPiIntegration } from "@overfactor/integration-pi/install";
 import { healthResponseSchema } from "@overfactor/sdk";
 import {
   daemonInfoPath,
@@ -274,6 +275,16 @@ const installClaudeCode = defineCommand({
   },
 });
 
+const installPi = defineCommand({
+  meta: { name: "pi", description: "Install the Pi extension integration (all projects)" },
+  async run() {
+    const result = await installPiIntegration();
+    console.log(`installed ${result.packagePath}`);
+    console.log(`into ${result.settingsPath}`);
+    console.log("open Pi sessions pick it up after /reload or restart");
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "overfactor",
@@ -290,7 +301,7 @@ const main = defineCommand({
     }),
     install: defineCommand({
       meta: { name: "install", description: "Install agent integrations" },
-      subCommands: { "claude-code": installClaudeCode },
+      subCommands: { "claude-code": installClaudeCode, pi: installPi },
     }),
   },
 });

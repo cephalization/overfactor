@@ -27,6 +27,7 @@
     "@hono/node-ws": "catalog:",
     "@hono/zod-validator": "catalog:",
     "@overfactor/integration-claude-code": "workspace:*",
+    "@overfactor/integration-pi": "workspace:*",
     "@overfactor/sdk": "workspace:*",
     "better-sqlite3": "catalog:",
     "chokidar": "catalog:",

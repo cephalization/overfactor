@@ -131,6 +131,11 @@ export class SessionStore {
     return this.db.select().from(sessions).all().map(rowToSession);
   }
 
+  get(id: string): Session | null {
+    const row = this.db.select().from(sessions).where(eq(sessions.id, id)).get();
+    return row === undefined ? null : rowToSession(row);
+  }
+
   /** Distinct cwds of sessions that are still live (not ended), optionally scoped to one repo. */
   liveCwds(repoPath?: string): string[] {
     const rows = this.db.select().from(sessions).all();

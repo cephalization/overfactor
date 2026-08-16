@@ -66,6 +66,13 @@ export const hookEventSchema = z.discriminatedUnion("type", [
 ]);
 export type HookEvent = z.infer<typeof hookEventSchema>;
 
+/** Response of `GET /sessions/:id/diff`: the raw `git diff HEAD` patch of the session's worktree. */
+export const sessionDiffSchema = z.object({
+  /** Unified multi-file patch; null when the diff cannot be computed. */
+  patch: z.string().nullable(),
+});
+export type SessionDiff = z.infer<typeof sessionDiffSchema>;
+
 /** Messages the daemon pushes to app subscribers over WebSocket. */
 export const wsServerMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("invalidate"), collection: z.enum(["sessions", "repos"]) }),

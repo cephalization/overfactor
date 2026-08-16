@@ -5,6 +5,7 @@ import { readOverfactorConfig } from "@overfactor/sdk/node";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { sep } from "node:path";
+import { computeDiffPatch } from "./diff.ts";
 import { addRepo, removeRepo } from "./repos.ts";
 import type { SessionStore } from "./store.ts";
 
@@ -57,6 +58,15 @@ export function createApp(deps: AppDeps) {
         c.json({ ok: true as const, version: DAEMON_VERSION, pid: process.pid }),
       )
       .get("/sessions", (c) => c.json(deps.store.list()))
+      // Full patch, computed on demand — never persisted. Scope matches the
+      // stats: staged + unstaged vs HEAD of the session's worktree.
+      .get("/sessions/:id/diff", async (c) => {
+        const session = deps.store.get(c.req.param("id"));
+        if (session === null) {
+          return c.json({ error: "unknown-session" as const }, 404);
+        }
+        return c.json({ patch: await computeDiffPatch(session.cwd) });
+      })
       .post("/events", zValidator("json", hookEventSchema), (c) => {
         const event = c.req.valid("json");
         const repoPath = resolveRepoForCwd(deps.repos(), event.cwd);

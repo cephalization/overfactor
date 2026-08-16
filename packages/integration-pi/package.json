@@ -13,6 +13,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.mjs",
+    "./install": "./dist/install.mjs",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -22,7 +23,8 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@overfactor/sdk": "workspace:*"
+    "@overfactor/sdk": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.82.1",

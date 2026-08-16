@@ -7,6 +7,7 @@
 ```bash
 git submodule update --init && vp install && vp run -r build   # once per checkout
 pnpm overfactor install claude-code                            # once; writes ~/.claude/settings.json
+pnpm overfactor install pi                                     # once; writes ~/.pi/agent/settings.json
 # Pi integration is project-local via .pi/settings.json; trust the repo, then /reload if needed
 vp run dev                                                     # daemon + app, hot reloading; Ctrl-C cleans up
 ```
@@ -28,7 +29,7 @@ Run the quick start, then walk the list. Each item states the expected result.
 7. **Diff stats** — Have the agent edit tracked files: the row's `+/−` line counts and file count update live (staged + unstaged vs HEAD; untracked files are not counted).
 8. **Untrack** — ✕ next to a repo removes it; new sessions in that repo no longer appear.
 9. **Restart resilience** — `overfactor daemon stop && overfactor daemon start`: the app reconnects on its own and previously seen sessions are still listed (sqlite persistence).
-10. **Session detail** — Click a session row: it highlights and the main pane shows its metadata (state, agent, diff stats, repo/transcript paths, timestamps). Diff review/transcript are later slices.
+10. **Session detail + diff view** — Click a session row: it highlights and the main pane shows the session header (state, agent, diff stats, repo) above the full diff — per-file cards with syntax highlighting, change-type icons, +/− counts, a toggleable file tree (git-status colors; click a file to jump to its card), and a unified/split toggle. Edit a tracked file while watching: stats and the diff body update live. A clean worktree says so instead of showing an empty diff. Code surfaces follow the OS light/dark scheme along with the shell.
 
 ## Agent testing (agent-browser)
 
@@ -76,4 +77,4 @@ rm -rf "$SBX"
 
 Assertion guide: `agent-browser snapshot -i` exposes lifecycle state, title, agent, and diff stats in each session button's accessible name — grep the snapshot instead of screenshotting. `agent-browser screenshot <path>` is for visual/theming checks only. Other hook events: `PreToolUse`/`PostToolUse` (+ `tool_name`) → working, `Notification` (+ `message`) → blocked, `SessionEnd` (+ `reason`) → ended.
 
-Troubleshooting: a session missing from the UI but present in `curl -s http://127.0.0.1:$OVERFACTOR_PORT/sessions` means the WS/refetch path broke; "Daemon not running" in the UI with a healthy daemon means `daemon.json` is missing from `$OVERFACTOR_DIR` or the app was launched without the sandbox env. The app's dev logs are in `$SBX/app.log`, the daemon's in `$OVERFACTOR_DIR/daemon.log`.
+Troubleshooting: sessions are detected only at event time (no transcript scanning or backfill) — a real agent session that never appears usually means its integration isn't installed user-level (`overfactor install claude-code` / `install pi`), the daemon was down when it ran, or its repo wasn't tracked yet. A session missing from the UI but present in `curl -s http://127.0.0.1:$OVERFACTOR_PORT/sessions` means the WS/refetch path broke; "Daemon not running" in the UI with a healthy daemon means `daemon.json` is missing from `$OVERFACTOR_DIR` or the app was launched without the sandbox env. The app's dev logs are in `$SBX/app.log`, the daemon's in `$OVERFACTOR_DIR/daemon.log`.

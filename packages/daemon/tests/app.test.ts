@@ -58,6 +58,42 @@ describe("daemon app", () => {
     expect(store.list()).toHaveLength(0);
   });
 
+  it("serves a session's patch and 404s unknown sessions", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtemp, realpath, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const join = (...parts: string[]) => path.join(...parts);
+    const repo = await realpath(await mkdtemp(join(tmpdir(), "overfactor-app-diff-")));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, {
+        cwd: repo,
+        env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t.t" },
+        stdio: "pipe",
+      });
+    git("init");
+    await writeFile(join(repo, "a.txt"), "one\n");
+    git("add", ".");
+    git("-c", "user.name=t", "-c", "user.email=t@t.t", "commit", "-m", "init");
+    await writeFile(join(repo, "a.txt"), "one\ntwo\n");
+
+    const { app } = makeApp([repo]);
+    await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...startEvent, cwd: repo }),
+    });
+
+    const diff = await app.request("/sessions/sess-1/diff");
+    expect(diff.status).toBe(200);
+    const body = (await diff.json()) as { patch: string | null };
+    expect(body.patch).toContain("diff --git a/a.txt b/a.txt");
+    expect(body.patch).toContain("+two");
+
+    const missing = await app.request("/sessions/nope/diff");
+    expect(missing.status).toBe(404);
+  });
+
   it("reports health", async () => {
     const { app } = makeApp([]);
     const response = await app.request("/health");

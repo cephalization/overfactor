@@ -52,3 +52,24 @@ export async function computeDiffStats(cwd: string): Promise<DiffStats | null> {
     return null;
   }
 }
+
+/**
+ * The full `git diff HEAD` patch of the worktree containing `cwd` — same
+ * scope and fallback behavior as computeDiffStats. Computed on demand (per
+ * request), never persisted.
+ */
+export async function computeDiffPatch(cwd: string): Promise<string | null> {
+  const git = createGit({ fs, cwd });
+  const result = await git.exec("diff HEAD");
+  if (result.exitCode === 0) return result.stdout;
+
+  try {
+    const { stdout } = await execFileAsync("git", ["diff", "HEAD"], {
+      cwd,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return null;
+  }
+}
