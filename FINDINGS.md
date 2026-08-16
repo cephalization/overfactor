@@ -162,6 +162,10 @@ The session detail is now a two-pane review surface: diff experiences on the lef
 
 The sidebar now treats repositories as the primary navigation container instead of maintaining separate Repos and chat sections. Every tracked repo is shown (including empty ones); its CRs and non-CR branch groups are nested beneath it. Default-branch sessions remain non-CRs but are visibly grouped under their branch name, while detached/unresolved sessions use a dedicated fallback group. Historical sessions and CRs from untracked repos remain visible, but only tracked repo headers expose the untrack action.
 
+## 2026-08-16 — implemented — session filters and archival
+
+Session archival is a durable sqlite-backed flag independent of lifecycle state: future hook events continue updating an archived session without restoring it. The sidebar hides archived sessions by default, can include them with the Archived filter, and exposes archive/restore actions on chat hover. Lifecycle filter buttons are renderer-local visibility controls; repositories remain visible even when all their chats are filtered out. Existing databases migrate archived to false.
+
 ## 2026-08-15 — note — docs: reading design.html
 
 `design.html` is a self-extracting bundle, not plain HTML — content lives in `<script type="__bundler/manifest">` (per-asset gzip+base64 JSON) and `<script type="__bundler/template">` (JSON-encoded HTML string). To read it without a browser: parse those two blocks, base64-decode + gunzip manifest entries, `json.loads` the template. The rendered doc is the internal working spec (concepts, flow, UI mock, decisions); the prior marketing draft is kept separately as "Switchyard Product Sheet".

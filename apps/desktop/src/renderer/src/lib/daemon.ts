@@ -137,6 +137,19 @@ export function useRemoveRepo(baseUrl: string) {
   });
 }
 
+export function useSetSessionArchived(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({ sessionId, archived }: { sessionId: string; archived: boolean }) => {
+      const response = await createDaemonClient(baseUrl).sessions[":id"].archive.$post({
+        param: { id: sessionId },
+        json: { archived },
+      });
+      if (!response.ok) throw new Error(`archive update failed (${response.status})`);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+}
+
 /**
  * Full patch for one session, computed by the daemon on demand. The queryKey
  * lives under the "sessions" prefix on purpose: the daemon's WS "sessions"

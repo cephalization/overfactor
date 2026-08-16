@@ -12,6 +12,7 @@ import {
   useRemoveRepo,
   useRepos,
   useSessionInvalidation,
+  useSetSessionArchived,
 } from "@/lib/daemon.ts";
 
 export function App() {
@@ -45,6 +46,7 @@ function Connected({ info }: { info: DaemonInfo }) {
   const crs = useCrs(baseUrl);
   const addRepo = useAddRepo(baseUrl);
   const removeRepo = useRemoveRepo(baseUrl);
+  const setSessionArchived = useSetSessionArchived(baseUrl);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = (sessions ?? []).find((session) => session.id === selectedId) ?? null;
 
@@ -59,6 +61,7 @@ function Connected({ info }: { info: DaemonInfo }) {
         onAddRepo={() => addRepo.mutate()}
         onRemoveRepo={(path) => removeRepo.mutate(path)}
         addRepoError={addRepo.error?.message ?? null}
+        onSetArchived={(sessionId, archived) => setSessionArchived.mutate({ sessionId, archived })}
       />
       {/* Viewport-bound so the detail view's panels (diff / transcript)
           scroll independently. The diff pane is its own scroll container —

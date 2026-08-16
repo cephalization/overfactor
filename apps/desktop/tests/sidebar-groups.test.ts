@@ -1,6 +1,9 @@
 import type { ChangeRequest, Session } from "@overfactor/sdk";
 import { describe, expect, it } from "vitest";
-import { groupSidebarItems } from "../src/renderer/src/lib/sidebar-groups.ts";
+import {
+  filterSidebarSessions,
+  groupSidebarItems,
+} from "../src/renderer/src/lib/sidebar-groups.ts";
 
 const NOW = "2026-08-16T12:00:00.000Z";
 
@@ -17,6 +20,7 @@ function session({
     transcriptPath: null,
     branch: "main",
     crId: null,
+    archived: false,
     diff: null,
     startedAt: NOW,
     updatedAt: NOW,
@@ -79,17 +83,33 @@ describe("groupSidebarItems", () => {
     ]);
   });
 
-  it("retains historical sessions and CRs from repos that are no longer tracked", () => {
+  it("retains historical sessions from repos that are no longer tracked", () => {
+    const request = cr({ id: 9, repoPath: "/repos/old" });
     const groups = groupSidebarItems(
       [],
-      [session({ id: "old-session", repoPath: "/repos/old" })],
-      [cr({ id: 9, repoPath: "/repos/old" })],
+      [session({ id: "old-session", repoPath: "/repos/old", crId: request.id })],
+      [request],
     );
 
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ path: "/repos/old", tracked: false });
     expect(groups[0]?.crGroups[0]?.cr.id).toBe(9);
-    expect(groups[0]?.branchGroups[0]?.sessions[0]?.id).toBe("old-session");
+    expect(groups[0]?.crGroups[0]?.sessions[0]?.id).toBe("old-session");
+  });
+
+  it("filters session states and hides archived sessions by default", () => {
+    const sessions = [
+      session({ id: "working", repoPath: "/repos/alpha", state: "working" }),
+      session({ id: "idle", repoPath: "/repos/alpha", state: "idle" }),
+      session({ id: "archived", repoPath: "/repos/alpha", archived: true }),
+    ];
+
+    expect(
+      filterSidebarSessions(sessions, new Set(["working"]), false).map((item) => item.id),
+    ).toEqual(["working"]);
+    expect(filterSidebarSessions(sessions, new Set(["idle"]), true).map((item) => item.id)).toEqual(
+      ["idle", "archived"],
+    );
   });
 
   it("does not place a session beneath a CR belonging to another repo", () => {
@@ -101,6 +121,6 @@ describe("groupSidebarItems", () => {
 
     expect(groups[0]?.crGroups).toEqual([]);
     expect(groups[0]?.branchGroups[0]?.sessions[0]?.id).toBe("session");
-    expect(groups[1]?.crGroups[0]?.sessions).toEqual([]);
+    expect(groups[1]?.crGroups).toEqual([]);
   });
 });

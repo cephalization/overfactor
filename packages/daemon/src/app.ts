@@ -84,6 +84,15 @@ export function createApp(deps: AppDeps) {
           return c.json({ ok: true as const });
         },
       )
+      .post(
+        "/sessions/:id/archive",
+        zValidator("json", z.object({ archived: z.boolean() })),
+        (c) => {
+          const updated = deps.store.setArchived(c.req.param("id"), c.req.valid("json").archived);
+          if (!updated) return c.json({ error: "unknown-session" as const }, 404);
+          return c.json({ ok: true as const });
+        },
+      )
       // Manual pin: overrides automatic branch grouping; null clears the pin.
       .post(
         "/sessions/:id/cr",

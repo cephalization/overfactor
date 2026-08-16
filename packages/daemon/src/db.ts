@@ -16,6 +16,7 @@ export const sessions = sqliteTable("sessions", {
   branch: text("branch"),
   /** Manual pin to a Change Request; overrides automatic branch grouping. */
   crId: integer("cr_id"),
+  archived: integer("archived", { mode: "boolean" }).notNull().default(false),
   filesChanged: integer("files_changed"),
   insertions: integer("insertions"),
   deletions: integer("deletions"),
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   transcript_path TEXT,
   branch TEXT,
   cr_id INTEGER,
+  archived INTEGER NOT NULL DEFAULT 0,
   files_changed INTEGER,
   insertions INTEGER,
   deletions INTEGER,
@@ -79,6 +81,7 @@ const SESSION_COLUMN_MIGRATIONS: Record<string, string> = {
   title_source: "ALTER TABLE sessions ADD COLUMN title_source TEXT",
   branch: "ALTER TABLE sessions ADD COLUMN branch TEXT",
   cr_id: "ALTER TABLE sessions ADD COLUMN cr_id INTEGER",
+  archived: "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
 };
 
 export type Db = ReturnType<typeof openDb>;

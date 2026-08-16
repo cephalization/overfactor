@@ -58,6 +58,43 @@ describe("daemon app", () => {
     expect(store.list()).toHaveLength(0);
   });
 
+  it("archives and restores a session", async () => {
+    const { app } = makeApp(["/repo"]);
+    await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(startEvent),
+    });
+
+    const archive = await app.request("/sessions/sess-1/archive", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    expect(archive.status).toBe(200);
+    const sessions = z.array(sessionSchema).parse(await (await app.request("/sessions")).json());
+    expect(sessions[0]?.archived).toBe(true);
+
+    const restore = await app.request("/sessions/sess-1/archive", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: false }),
+    });
+    expect(restore.status).toBe(200);
+    expect(
+      z.array(sessionSchema).parse(await (await app.request("/sessions")).json())[0]?.archived,
+    ).toBe(false);
+    expect(
+      (
+        await app.request("/sessions/nope/archive", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ archived: true }),
+        })
+      ).status,
+    ).toBe(404);
+  });
+
   it("serves a session's patch and 404s unknown sessions", async () => {
     const { execFileSync } = await import("node:child_process");
     const { mkdtemp, realpath, writeFile } = await import("node:fs/promises");

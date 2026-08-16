@@ -40,6 +40,8 @@ export const sessionSchema = z.object({
    * detached, or branch not yet resolved).
    */
   crId: z.int().positive().nullable(),
+  /** User-controlled visibility flag; archived sessions remain fully accessible. */
+  archived: z.boolean(),
   /** `git diff` stats of the session's worktree; null until first computed. */
   diff: diffStatsSchema.nullable(),
   startedAt: z.iso.datetime(),

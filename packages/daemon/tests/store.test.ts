@@ -29,6 +29,7 @@ describe("SessionStore lifecycle", () => {
       title: null,
       transcriptPath: "/t.jsonl",
       repoPath: REPO,
+      archived: false,
       diff: null,
     });
   });
@@ -133,6 +134,19 @@ describe("SessionStore lifecycle", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(emitted).toBe(1);
     expect(store.listChangeRequests()).toHaveLength(1);
+  });
+
+  it("archives and restores sessions without changing lifecycle state", () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: null }), REPO);
+
+    expect(store.setArchived("sess-1", true)).toBe(true);
+    expect(store.get("sess-1")).toMatchObject({ archived: true, state: "working" });
+    store.applyEvent(event({ type: "stopped" }), REPO);
+    expect(store.get("sess-1")).toMatchObject({ archived: true, state: "idle" });
+    expect(store.setArchived("sess-1", false)).toBe(true);
+    expect(store.get("sess-1")?.archived).toBe(false);
+    expect(store.setArchived("nope", true)).toBe(false);
   });
 
   it("excludes ended sessions from live cwds", () => {

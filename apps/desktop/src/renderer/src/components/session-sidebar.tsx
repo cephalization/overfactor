@@ -1,6 +1,8 @@
 import type { ChangeRequest, LifecycleState, Session } from "@overfactor/sdk";
-import { FolderPlus, GitBranch, X } from "lucide-react";
+import { Archive, ArchiveRestore, FolderPlus, GitBranch, X } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -10,10 +12,11 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar.tsx";
-import { groupSidebarItems } from "@/lib/sidebar-groups.ts";
+import { filterSidebarSessions, groupSidebarItems } from "@/lib/sidebar-groups.ts";
 import { cn } from "@/lib/utils.ts";
 
 export const STATE_STYLES: Record<LifecycleState, { label: string; dot: string }> = {
@@ -27,6 +30,8 @@ export const AGENT_LABELS: Record<Session["agent"], string> = {
   "claude-code": "Claude Code",
   pi: "pi",
 };
+
+const SESSION_STATES: LifecycleState[] = ["working", "idle", "blocked", "ended"];
 
 export function DiffStats({ session }: { session: Session }) {
   if (session.diff === null) return null;
@@ -62,13 +67,29 @@ export function SessionSidebar({
   onAddRepo,
   onRemoveRepo,
   addRepoError,
+  onSetArchived,
 }: {
   sessions: Session[];
   crs: ChangeRequest[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onSetArchived: (id: string, archived: boolean) => void;
 } & RepoSectionProps) {
-  const repoGroups = groupSidebarItems(repos, sessions, crs);
+  const [visibleStates, setVisibleStates] = useState<Set<LifecycleState>>(
+    () => new Set(SESSION_STATES),
+  );
+  const [showArchived, setShowArchived] = useState(false);
+  const visibleSessions = filterSidebarSessions(sessions, visibleStates, showArchived);
+  const repoGroups = groupSidebarItems(repos, visibleSessions, crs);
+
+  const toggleState = (state: LifecycleState) => {
+    setVisibleStates((current) => {
+      const next = new Set(current);
+      if (next.has(state)) next.delete(state);
+      else next.add(state);
+      return next;
+    });
+  };
 
   return (
     <Sidebar>
@@ -86,6 +107,53 @@ export function SessionSidebar({
           </button>
         </div>
         {addRepoError !== null && <p className="text-xs text-destructive">{addRepoError}</p>}
+        <div className="flex items-center gap-1 border-t border-sidebar-border pt-2">
+          {SESSION_STATES.map((state) => {
+            const visible = visibleStates.has(state);
+            const style = STATE_STYLES[state];
+            return (
+              <Tooltip key={state}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-pressed={visible}
+                    className={cn(
+                      "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                      visible ? "bg-sidebar-accent" : "opacity-40",
+                    )}
+                    onClick={() => toggleState(state)}
+                  >
+                    <span className={cn("size-2.5 rounded-full", style.dot)} />
+                    <span className="sr-only">{style.label}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={4}>
+                  {visible ? "Hide" : "Show"} {style.label.toLowerCase()} chats
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+          <span className="mx-1 h-4 w-px bg-sidebar-border" aria-hidden="true" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-pressed={showArchived}
+                className={cn(
+                  "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  showArchived ? "bg-sidebar-accent text-sidebar-accent-foreground" : "opacity-60",
+                )}
+                onClick={() => setShowArchived((current) => !current)}
+              >
+                <Archive className="size-3.5" />
+                <span className="sr-only">Archived chats</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={4}>
+              {showArchived ? "Hide" : "Show"} archived chats
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </SidebarHeader>
       <SidebarContent>
         {repoGroups.length === 0 ? (
@@ -104,6 +172,7 @@ export function SessionSidebar({
               </SidebarGroupLabel>
               {repo.tracked && (
                 <SidebarGroupAction
+                  className="top-2.5 right-4 size-7 w-7"
                   title={`Stop tracking ${basename(repo.path)}`}
                   onClick={() => onRemoveRepo(repo.path)}
                 >
@@ -124,13 +193,12 @@ export function SessionSidebar({
                     {crSessions.length === 0 ? (
                       <p className="px-4 py-1 text-xs text-muted-foreground">No sessions</p>
                     ) : (
-                      <div className="pl-2">
-                        <SessionMenu
-                          sessions={crSessions}
-                          selectedId={selectedId}
-                          onSelect={onSelect}
-                        />
-                      </div>
+                      <SessionMenu
+                        sessions={crSessions}
+                        selectedId={selectedId}
+                        onSelect={onSelect}
+                        onSetArchived={onSetArchived}
+                      />
                     )}
                   </div>
                 ))}
@@ -140,18 +208,19 @@ export function SessionSidebar({
                       <GitBranch className="size-3.5 shrink-0" />
                       <span className="truncate font-medium">{branchGroup.label}</span>
                     </div>
-                    <div className="pl-2">
-                      <SessionMenu
-                        sessions={branchGroup.sessions}
-                        selectedId={selectedId}
-                        onSelect={onSelect}
-                      />
-                    </div>
+                    <SessionMenu
+                      sessions={branchGroup.sessions}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
+                      onSetArchived={onSetArchived}
+                    />
                   </div>
                 ))}
                 {repo.crGroups.length === 0 && repo.branchGroups.length === 0 && (
                   <p className="px-2 py-2 text-xs text-muted-foreground">
-                    No sessions yet. Start an agent in this repo.
+                    {sessions.some((session) => session.repoPath === repo.path)
+                      ? "No chats match the current filters."
+                      : "No sessions yet. Start an agent in this repo."}
                   </p>
                 )}
               </SidebarGroupContent>
@@ -167,10 +236,12 @@ function SessionMenu({
   sessions,
   selectedId,
   onSelect,
+  onSetArchived,
 }: {
   sessions: Session[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onSetArchived: (id: string, archived: boolean) => void;
 }) {
   return (
     <SidebarMenu>
@@ -193,12 +264,31 @@ function SessionMenu({
                 </span>
               </span>
               <span className="flex w-full items-center justify-between gap-2 pl-4">
-                <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                  {AGENT_LABELS[session.agent]}
-                </Badge>
+                <span className="flex items-center gap-1">
+                  <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                    {AGENT_LABELS[session.agent]}
+                  </Badge>
+                  {session.archived && (
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                      Archived
+                    </Badge>
+                  )}
+                </span>
                 <DiffStats session={session} />
               </span>
             </SidebarMenuButton>
+            <SidebarMenuAction
+              showOnHover
+              className="top-1 right-2 size-7 w-7"
+              title={session.archived ? "Unarchive chat" : "Archive chat"}
+              aria-label={session.archived ? "Unarchive chat" : "Archive chat"}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSetArchived(session.id, !session.archived);
+              }}
+            >
+              {session.archived ? <ArchiveRestore /> : <Archive />}
+            </SidebarMenuAction>
           </SidebarMenuItem>
         );
       })}

@@ -1,4 +1,4 @@
-import type { ChangeRequest, Session } from "@overfactor/sdk";
+import type { ChangeRequest, LifecycleState, Session } from "@overfactor/sdk";
 
 export interface SidebarCrGroup {
   cr: ChangeRequest;
@@ -18,6 +18,16 @@ export interface SidebarRepoGroup {
   branchGroups: SidebarBranchGroup[];
 }
 
+export function filterSidebarSessions(
+  sessions: Session[],
+  visibleStates: ReadonlySet<LifecycleState>,
+  showArchived: boolean,
+): Session[] {
+  return sessions.filter(
+    (session) => visibleStates.has(session.state) && (showArchived || !session.archived),
+  );
+}
+
 /**
  * Builds the repo-first sidebar hierarchy. CRs remain durable branch-backed
  * units, while sessions without a CR are still visually grouped by branch
@@ -31,16 +41,17 @@ export function groupSidebarItems(
   const trackedRepos = new Set(repos);
   const repoPaths = new Set(repos);
   for (const session of sessions) repoPaths.add(session.repoPath);
-  for (const cr of crs) repoPaths.add(cr.repoPath);
 
   return [...repoPaths].map((path) => {
     const repoSessions = sessions.filter((session) => session.repoPath === path);
     const repoCrs = crs.filter((cr) => cr.repoPath === path);
     const repoCrIds = new Set(repoCrs.map((cr) => cr.id));
-    const crGroups = repoCrs.map((cr) => ({
-      cr,
-      sessions: repoSessions.filter((session) => session.crId === cr.id),
-    }));
+    const crGroups = repoCrs
+      .map((cr) => ({
+        cr,
+        sessions: repoSessions.filter((session) => session.crId === cr.id),
+      }))
+      .filter((group) => group.sessions.length > 0);
 
     const byBranch = new Map<string | null, Session[]>();
     for (const session of repoSessions) {

@@ -31,6 +31,7 @@ function rowToSession(row: SessionRow, effectiveCrId: number | null): Session {
     transcriptPath: row.transcriptPath,
     branch: row.branch,
     crId: effectiveCrId,
+    archived: row.archived,
     diff:
       row.filesChanged === null || row.insertions === null || row.deletions === null
         ? null
@@ -200,6 +201,20 @@ export class SessionStore {
     this.db
       .update(sessions)
       .set({ crId, updatedAt: this.now().toISOString() })
+      .where(eq(sessions.id, sessionId))
+      .run();
+    void this.events.emit("changed");
+    return true;
+  }
+
+  /** Archives or restores a session. Returns false for an unknown session. */
+  setArchived(sessionId: string, archived: boolean): boolean {
+    const row = this.db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+    if (row === undefined) return false;
+    if (row.archived === archived) return true;
+    this.db
+      .update(sessions)
+      .set({ archived, updatedAt: this.now().toISOString() })
       .where(eq(sessions.id, sessionId))
       .run();
     void this.events.emit("changed");
