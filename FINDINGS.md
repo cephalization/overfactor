@@ -158,6 +158,10 @@ The session detail is now a two-pane review surface: diff experiences on the lef
 - **Scroll architecture changed**: the app is now viewport-bound (`SidebarInset h-svh overflow-hidden`) and the diff pane is its own scroll container — position:sticky (file tree, curated group summaries) binds to the pane. The earlier "document is the scroll container" comment no longer applies.
 - Curated review's directory grouping is an explicit structural stand-in: the component's shape (groups → sticky summary + files + mark-reviewed) is what Guided Review's generated intent groups will fill.
 
+## 2026-08-16 — implemented — repo-first sidebar hierarchy
+
+The sidebar now treats repositories as the primary navigation container instead of maintaining separate Repos and chat sections. Every tracked repo is shown (including empty ones); its CRs and non-CR branch groups are nested beneath it. Default-branch sessions remain non-CRs but are visibly grouped under their branch name, while detached/unresolved sessions use a dedicated fallback group. Historical sessions and CRs from untracked repos remain visible, but only tracked repo headers expose the untrack action.
+
 ## 2026-08-15 — note — docs: reading design.html
 
 `design.html` is a self-extracting bundle, not plain HTML — content lives in `<script type="__bundler/manifest">` (per-asset gzip+base64 JSON) and `<script type="__bundler/template">` (JSON-encoded HTML string). To read it without a browser: parse those two blocks, base64-decode + gunzip manifest entries, `json.loads` the template. The rendered doc is the internal working spec (concepts, flow, UI mock, decisions); the prior marketing draft is kept separately as "Switchyard Product Sheet".

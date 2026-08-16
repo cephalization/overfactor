@@ -1,5 +1,5 @@
 import type { ChangeRequest, LifecycleState, Session } from "@overfactor/sdk";
-import { FolderPlus, X } from "lucide-react";
+import { FolderPlus, GitBranch, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
   Sidebar,
@@ -10,10 +10,10 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar.tsx";
+import { groupSidebarItems } from "@/lib/sidebar-groups.ts";
 import { cn } from "@/lib/utils.ts";
 
 export const STATE_STYLES: Record<LifecycleState, { label: string; dot: string }> = {
@@ -53,116 +53,110 @@ export interface RepoSectionProps {
   addRepoError: string | null;
 }
 
-function RepoSection({ repos, onAddRepo, onRemoveRepo, addRepoError }: RepoSectionProps) {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Repos</SidebarGroupLabel>
-      <SidebarGroupAction title="Track a repo" onClick={onAddRepo}>
-        <FolderPlus />
-        <span className="sr-only">Track a repo</span>
-      </SidebarGroupAction>
-      <SidebarGroupContent>
-        {repos.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">
-            No repos tracked yet — add one to start watching sessions.
-          </p>
-        ) : (
-          <SidebarMenu>
-            {repos.map((repo) => (
-              <SidebarMenuItem key={repo}>
-                <SidebarMenuButton title={repo}>
-                  <span className="truncate text-sm">{basename(repo)}</span>
-                </SidebarMenuButton>
-                <SidebarMenuAction
-                  title={`Stop tracking ${basename(repo)}`}
-                  onClick={() => onRemoveRepo(repo)}
-                >
-                  <X />
-                  <span className="sr-only">Stop tracking {basename(repo)}</span>
-                </SidebarMenuAction>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        )}
-        {addRepoError !== null && (
-          <p className="px-2 py-1 text-xs text-destructive">{addRepoError}</p>
-        )}
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
 export function SessionSidebar({
   sessions,
   crs,
   selectedId,
   onSelect,
-  ...repoProps
+  repos,
+  onAddRepo,
+  onRemoveRepo,
+  addRepoError,
 }: {
   sessions: Session[];
   crs: ChangeRequest[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 } & RepoSectionProps) {
-  // Sidebar layout from the design mock: chats grouped under their CR, with
-  // an Ungrouped section for default-branch/unresolved sessions. CRs with no
-  // sessions are not shown.
-  const byCr = new Map<number, Session[]>();
-  const ungrouped: Session[] = [];
-  for (const session of sessions) {
-    if (session.crId === null) {
-      ungrouped.push(session);
-    } else {
-      byCr.set(session.crId, [...(byCr.get(session.crId) ?? []), session]);
-    }
-  }
-  const crGroups = crs
-    .filter((cr) => byCr.has(cr.id))
-    .map((cr) => ({ cr, sessions: byCr.get(cr.id) ?? [] }));
-  // Sessions whose CR row hasn't loaded yet fall back to Ungrouped.
-  const knownCrIds = new Set(crs.map((cr) => cr.id));
-  for (const [crId, orphaned] of byCr) {
-    if (!knownCrIds.has(crId)) ungrouped.push(...orphaned);
-  }
+  const repoGroups = groupSidebarItems(repos, sessions, crs);
 
   return (
     <Sidebar>
-      <SidebarHeader className="px-4 py-3">
-        <span className="text-sm font-semibold tracking-tight">Overfactor</span>
+      <SidebarHeader className="gap-1 px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold tracking-tight">Overfactor</span>
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+            title="Track a repo"
+            onClick={onAddRepo}
+          >
+            <FolderPlus className="size-4" />
+            <span className="sr-only">Track a repo</span>
+          </button>
+        </div>
+        {addRepoError !== null && <p className="text-xs text-destructive">{addRepoError}</p>}
       </SidebarHeader>
       <SidebarContent>
-        <RepoSection {...repoProps} />
-        {sessions.length === 0 ? (
+        {repoGroups.length === 0 ? (
           <SidebarGroup>
-            <SidebarGroupLabel>Sessions</SidebarGroupLabel>
             <SidebarGroupContent>
               <p className="px-2 py-4 text-xs text-muted-foreground">
-                No sessions yet. Start an agent in a tracked repo.
+                No repos tracked yet — add one to start watching sessions.
               </p>
             </SidebarGroupContent>
           </SidebarGroup>
         ) : (
-          <>
-            {crGroups.map(({ cr, sessions: crSessions }) => (
-              <SidebarGroup key={cr.id}>
-                <SidebarGroupLabel className="gap-1.5" title={`${cr.repoPath} · ${cr.branch}`}>
-                  <span className="shrink-0 font-semibold">CR-{cr.id}</span>
-                  <span className="truncate">· {cr.title}</span>
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SessionMenu sessions={crSessions} selectedId={selectedId} onSelect={onSelect} />
-                </SidebarGroupContent>
-              </SidebarGroup>
-            ))}
-            {ungrouped.length > 0 && (
-              <SidebarGroup>
-                <SidebarGroupLabel>Ungrouped chats</SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SessionMenu sessions={ungrouped} selectedId={selectedId} onSelect={onSelect} />
-                </SidebarGroupContent>
-              </SidebarGroup>
-            )}
-          </>
+          repoGroups.map((repo) => (
+            <SidebarGroup key={repo.path}>
+              <SidebarGroupLabel className="text-sm font-semibold" title={repo.path}>
+                <span className="truncate">{basename(repo.path)}</span>
+              </SidebarGroupLabel>
+              {repo.tracked && (
+                <SidebarGroupAction
+                  title={`Stop tracking ${basename(repo.path)}`}
+                  onClick={() => onRemoveRepo(repo.path)}
+                >
+                  <X />
+                  <span className="sr-only">Stop tracking {basename(repo.path)}</span>
+                </SidebarGroupAction>
+              )}
+              <SidebarGroupContent className="space-y-3">
+                {repo.crGroups.map(({ cr, sessions: crSessions }) => (
+                  <div key={`cr:${cr.id}`} className="space-y-1">
+                    <div
+                      className="flex h-7 items-center gap-1.5 px-2 text-xs text-sidebar-foreground/70"
+                      title={`${cr.branch} · ${cr.repoPath}`}
+                    >
+                      <span className="shrink-0 font-semibold">CR-{cr.id}</span>
+                      <span className="truncate">· {cr.title}</span>
+                    </div>
+                    {crSessions.length === 0 ? (
+                      <p className="px-4 py-1 text-xs text-muted-foreground">No sessions</p>
+                    ) : (
+                      <div className="pl-2">
+                        <SessionMenu
+                          sessions={crSessions}
+                          selectedId={selectedId}
+                          onSelect={onSelect}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {repo.branchGroups.map((branchGroup) => (
+                  <div key={`branch:${branchGroup.branch ?? ""}`} className="space-y-1">
+                    <div className="flex h-7 items-center gap-1.5 px-2 text-xs text-sidebar-foreground/70">
+                      <GitBranch className="size-3.5 shrink-0" />
+                      <span className="truncate font-medium">{branchGroup.label}</span>
+                    </div>
+                    <div className="pl-2">
+                      <SessionMenu
+                        sessions={branchGroup.sessions}
+                        selectedId={selectedId}
+                        onSelect={onSelect}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {repo.crGroups.length === 0 && repo.branchGroups.length === 0 && (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">
+                    No sessions yet. Start an agent in this repo.
+                  </p>
+                )}
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))
         )}
       </SidebarContent>
     </Sidebar>
