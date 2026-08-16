@@ -8,7 +8,6 @@
 git submodule update --init && vp install && vp run -r build   # once per checkout
 pnpm overfactor install claude-code                            # once; writes ~/.claude/settings.json
 pnpm overfactor install pi                                     # once; writes ~/.pi/agent/settings.json
-# Pi integration is project-local via .pi/settings.json; trust the repo, then /reload if needed
 vp run dev                                                     # daemon + app, hot reloading; Ctrl-C cleans up
 ```
 
