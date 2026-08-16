@@ -10,6 +10,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { AGENT_LABELS } from "@/components/session-sidebar.tsx";
+import { Bubble, BubbleContent } from "@/components/ui/bubble.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
   DropdownMenu,
@@ -17,6 +18,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.tsx";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker.tsx";
+import { Message, MessageContent, MessageHeader } from "@/components/ui/message.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useSessionTranscript } from "@/lib/daemon.ts";
 import { groupTranscriptEntries, summarizeToolCalls } from "@/lib/transcript-groups.ts";
@@ -48,7 +51,7 @@ function EntryMenu({ entry }: { entry: TranscriptEntry }) {
         <Button
           variant="ghost"
           size="icon"
-          className="size-5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/entry:opacity-100 data-[state=open]:opacity-100"
+          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/entry:opacity-100 data-[state=open]:opacity-100"
           title="Entry actions"
         >
           <MoreHorizontal />
@@ -67,52 +70,120 @@ function EntryMenu({ entry }: { entry: TranscriptEntry }) {
   );
 }
 
-function EntryHeader({ entry, session }: { entry: TranscriptEntry; session: Session }) {
-  if (entry.role === "tool") {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">
-          {entry.toolName ?? "tool"}
-        </span>
-        <div className="h-px flex-1 bg-border" />
-        <EntryMenu entry={entry} />
-      </div>
-    );
-  }
-  const label =
-    entry.role === "user" ? "You" : entry.role === "assistant" ? AGENT_LABELS[session.agent] : "";
+function CompactionEntry({ entry }: { entry: TranscriptEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = entry.markdown.replace(/^_Session compacted\._\s*/, "");
+
   return (
-    <div className="flex items-center gap-2">
-      {label !== "" && (
-        <span
-          className={cn(
-            "text-xs font-semibold",
-            entry.role === "assistant" ? "text-primary" : "text-muted-foreground",
-          )}
+    <section className="flex flex-col">
+      <Marker
+        variant="separator"
+        asChild
+        className="rounded-md py-1.5 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <button
+          type="button"
+          aria-expanded={expanded}
+          title={`${expanded ? "Collapse" : "Expand"} compaction summary`}
+          onClick={() => setExpanded((current) => !current)}
         >
-          {label}
-        </span>
+          <MarkerIcon>
+            {expanded ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </MarkerIcon>
+          <MarkerContent className="whitespace-nowrap text-[11px] font-medium">
+            Session compacted
+          </MarkerContent>
+        </button>
+      </Marker>
+      {expanded && (
+        <Message className="group/entry mt-3 border-l border-border/70 pl-4">
+          <MessageContent className="gap-1.5">
+            <MessageHeader className="gap-2 px-1 text-[11px]">
+              <span className="font-medium text-muted-foreground">Compaction summary</span>
+              <span className="flex-1" />
+              <EntryMenu entry={entry} />
+            </MessageHeader>
+            <Bubble variant="ghost">
+              <BubbleContent className="w-full text-[13px] leading-6 text-foreground/80">
+                <Streamdown className="space-y-3" controls={false}>
+                  {summary}
+                </Streamdown>
+              </BubbleContent>
+            </Bubble>
+          </MessageContent>
+        </Message>
       )}
-      <div className="flex-1" />
-      <EntryMenu entry={entry} />
-    </div>
+    </section>
   );
 }
 
-function TranscriptEntryView({ entry, session }: { entry: TranscriptEntry; session: Session }) {
+function ConversationEntry({ entry, session }: { entry: TranscriptEntry; session: Session }) {
+  if (entry.role === "system") {
+    return entry.markdown.startsWith("_Session compacted._") ? (
+      <CompactionEntry entry={entry} />
+    ) : (
+      <Marker variant="separator" className="py-2 text-xs">
+        <MarkerContent className="max-w-[85%] text-pretty">{plainContent(entry)}</MarkerContent>
+      </Marker>
+    );
+  }
+
+  if (entry.role === "tool") {
+    const phase = entry.toolPhase === "result" ? "Output" : "Input";
+    return (
+      <Message className="group/entry">
+        <MessageContent className="gap-1.5">
+          <MessageHeader className="gap-2 px-1 text-[11px]">
+            <span className="font-medium text-foreground/75">{entry.toolName ?? "Tool"}</span>
+            <span className="text-muted-foreground/70">{phase}</span>
+            <span className="flex-1" />
+            <EntryMenu entry={entry} />
+          </MessageHeader>
+          <Bubble variant="outline" className="w-full max-w-full">
+            <BubbleContent className="transcript-tool w-full bg-muted/20 px-3 py-2.5 text-xs leading-5 text-foreground/80 [&_[data-streamdown='code-block-body']]:max-h-56 [&_[data-streamdown='code-block-body']]:overflow-y-auto">
+              <Streamdown className="space-y-2" controls={false}>
+                {entry.markdown}
+              </Streamdown>
+            </BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  const isUser = entry.role === "user";
+  const label = isUser ? "You" : AGENT_LABELS[session.agent];
+
   return (
-    <div className="group/entry flex flex-col gap-1">
-      <EntryHeader entry={entry} session={session} />
-      <div
-        className={cn(
-          "min-w-0 text-sm",
-          entry.role === "tool" && "opacity-70 [&_pre]:max-h-40 [&_pre]:overflow-y-auto",
-          entry.role === "system" && "text-muted-foreground",
-        )}
-      >
-        <Streamdown controls={false}>{entry.markdown}</Streamdown>
-      </div>
-    </div>
+    <Message align={isUser ? "end" : "start"} className="group/entry">
+      <MessageContent className="gap-1.5">
+        <MessageHeader className={cn("gap-2 text-[11px]", isUser && "justify-end")}>
+          <span className="font-medium text-muted-foreground">{label}</span>
+          {!isUser && <span className="flex-1" />}
+          <EntryMenu entry={entry} />
+        </MessageHeader>
+        <Bubble
+          align={isUser ? "end" : "start"}
+          variant={isUser ? "secondary" : "ghost"}
+          className={cn(isUser && "max-w-[90%]")}
+        >
+          <BubbleContent
+            className={cn(
+              "text-[13.5px] leading-6",
+              isUser ? "px-3.5 py-2.5" : "w-full text-foreground/90",
+            )}
+          >
+            <Streamdown className="space-y-3" controls={false}>
+              {entry.markdown}
+            </Streamdown>
+          </BubbleContent>
+        </Bubble>
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -131,30 +202,36 @@ function ToolGroup({
 
   return (
     <section className="flex flex-col">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        title={`${expanded ? "Collapse" : "Expand"} ${callLabel}`}
-        onClick={() => setExpanded((current) => !current)}
+      <Marker
+        variant="separator"
+        asChild
         className={cn(
-          "flex w-full items-center gap-2 py-1 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
-          expanded &&
-            "sticky -top-3 z-20 -mx-3 w-[calc(100%+1.5rem)] bg-background px-3 py-2 shadow-sm",
+          "rounded-md py-1.5 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50",
+          expanded && "sticky -top-6 z-20 bg-background py-2 shadow-sm",
         )}
       >
-        <div className="h-px flex-1 bg-border" />
-        {expanded ? (
-          <ChevronDown className="size-3.5 shrink-0" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0" />
-        )}
-        <span className="whitespace-nowrap font-mono text-[11px]">{summary}</span>
-        <div className="h-px flex-1 bg-border" />
-      </button>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          title={`${expanded ? "Collapse" : "Expand"} ${callLabel}`}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <MarkerIcon>
+            {expanded ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </MarkerIcon>
+          <MarkerContent className="whitespace-nowrap text-[11px] font-medium">
+            {summary}
+          </MarkerContent>
+        </button>
+      </Marker>
       {expanded && (
-        <div className="flex flex-col gap-4 pt-3">
+        <div className="mt-3 flex flex-col gap-5 border-l border-border/70 pl-4">
           {entries.map((entry) => (
-            <TranscriptEntryView key={entry.id} entry={entry} session={session} />
+            <ConversationEntry key={entry.id} entry={entry} session={session} />
           ))}
         </div>
       )}
@@ -195,8 +272,8 @@ export function TranscriptPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-        <Button variant="ghost" size="sm" onClick={onCollapse} title="Show transcript">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4">
+        <Button variant="ghost" size="sm" onClick={onCollapse} title="Hide transcript">
           <PanelRightClose />
           Transcript
         </Button>
@@ -214,41 +291,43 @@ export function TranscriptPanel({
           pinnedToBottom.current =
             el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
         }}
-        className="transcript-prose min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 [overflow-wrap:anywhere]"
+        className="transcript-prose min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-6 [overflow-wrap:anywhere]"
       >
-        {transcript.isPending ? (
-          <div className="flex flex-col gap-3">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        ) : transcript.isError ? (
-          <p className="text-sm text-destructive">
-            Could not load the transcript: {transcript.error.message}
-          </p>
-        ) : transcript.data.entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No transcript yet
-            {session.transcriptPath === null
-              ? " — the agent has not reported a transcript file"
-              : ""}
-            .
-          </p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {renderItems.map((item) =>
-              item.type === "entry" ? (
-                <TranscriptEntryView key={item.entry.id} entry={item.entry} session={session} />
-              ) : (
-                <ToolGroup
-                  key={item.id}
-                  calls={item.calls}
-                  entries={item.entries}
-                  session={session}
-                />
-              ),
-            )}
-          </div>
-        )}
+        <div className="mx-auto w-full max-w-3xl">
+          {transcript.isPending ? (
+            <div className="flex flex-col gap-4">
+              <Skeleton className="h-20 w-4/5 self-end rounded-xl" />
+              <Skeleton className="h-28 w-full rounded-xl" />
+            </div>
+          ) : transcript.isError ? (
+            <p className="text-sm text-destructive">
+              Could not load the transcript: {transcript.error.message}
+            </p>
+          ) : transcript.data.entries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No transcript yet
+              {session.transcriptPath === null
+                ? " — the agent has not reported a transcript file"
+                : ""}
+              .
+            </p>
+          ) : (
+            <div className="flex flex-col gap-7">
+              {renderItems.map((item) =>
+                item.type === "entry" ? (
+                  <ConversationEntry key={item.entry.id} entry={item.entry} session={session} />
+                ) : (
+                  <ToolGroup
+                    key={item.id}
+                    calls={item.calls}
+                    entries={item.entries}
+                    session={session}
+                  />
+                ),
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

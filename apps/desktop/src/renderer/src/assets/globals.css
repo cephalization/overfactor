@@ -139,6 +139,61 @@
   }
 }
 
+/* Conversation typography favors the native UI faces over browser defaults,
+ * with tighter heading scale and spacing than long-form document prose. */
+.transcript-prose {
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    sans-serif;
+  font-feature-settings:
+    "cv02" 1,
+    "cv03" 1,
+    "cv04" 1,
+    "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.transcript-prose [data-streamdown^="heading-"] {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+.transcript-prose [data-streamdown="heading-1"] {
+  font-size: 1.25rem;
+}
+.transcript-prose [data-streamdown="heading-2"] {
+  font-size: 1.125rem;
+}
+.transcript-prose [data-streamdown="heading-3"],
+.transcript-prose [data-streamdown="heading-4"],
+.transcript-prose [data-streamdown="heading-5"],
+.transcript-prose [data-streamdown="heading-6"] {
+  font-size: 1rem;
+}
+.transcript-prose [data-streamdown="unordered-list"],
+.transcript-prose [data-streamdown="ordered-list"] {
+  padding-left: 0.25rem;
+}
+.transcript-prose [data-streamdown="list-item"] {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+.transcript-prose [data-streamdown="inline-code"] {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85em;
+}
+.transcript-prose [data-streamdown="blockquote"] {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-left-width: 2px;
+}
+
 /* Understated code fences in the transcript: streamdown's default is a
  * bordered card with a header row — flatten it to a single quiet block.
  * Hooks are streamdown's data-streamdown part attributes. Unlayered on
@@ -167,4 +222,8 @@
   overflow-x: auto;
   border: 0;
   background: transparent;
+}
+.transcript-tool [data-streamdown="code-block-body"] {
+  background: transparent;
+  padding: 0;
 }

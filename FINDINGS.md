@@ -158,6 +158,10 @@ The session detail is now a two-pane review surface: diff experiences on the lef
 - **Scroll architecture changed**: the app is now viewport-bound (`SidebarInset h-svh overflow-hidden`) and the diff pane is its own scroll container — position:sticky (file tree, curated group summaries) binds to the pane. The earlier "document is the scroll container" comment no longer applies.
 - Curated review's directory grouping is an explicit structural stand-in: the component's shape (groups → sticky summary + files + mark-reviewed) is what Guided Review's generated intent groups will fill.
 
+## 2026-08-16 — implemented — transcript conversation styling
+
+Transcript rendering now composes the generated shadcn `Message`, `Bubble`, and `Marker` primitives: user prompts use restrained neutral bubbles, assistant prose stays unframed, compaction summaries and tool activity use collapsed expandable markers, and other system notes use separators. The transcript owns an explicit native UI font stack, compact markdown heading scale, wider gutters, and a centered readable content width; code remains on the existing streamdown/shiki theme domain.
+
 ## 2026-08-16 — implemented — repo-first sidebar hierarchy
 
 The sidebar now treats repositories as the primary navigation container instead of maintaining separate Repos and chat sections. Every tracked repo is shown (including empty ones); its CRs and non-CR branch groups are nested beneath it. Default-branch sessions remain non-CRs but are visibly grouped under their branch name, while detached/unresolved sessions use a dedicated fallback group. Historical sessions and CRs from untracked repos remain visible, but only tracked repo headers expose the untrack action.
