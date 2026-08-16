@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { daemonBaseUrl, readDaemonInfo } from "@overfactor/sdk/node";
+import { postHookEvent } from "@overfactor/sdk/node";
 import { claudeHookPayloadSchema, toHookEvent } from "./index.ts";
 
 /**
@@ -19,16 +19,8 @@ async function readStdin(): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const info = await readDaemonInfo();
-  if (info === null) return; // daemon not running — drop silently
-
   const payload = claudeHookPayloadSchema.parse(JSON.parse(await readStdin()));
-  await fetch(`${daemonBaseUrl(info)}/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(toHookEvent(payload)),
-    signal: AbortSignal.timeout(1500),
-  });
+  await postHookEvent(toHookEvent(payload));
 }
 
 main()

@@ -75,6 +75,23 @@ describe("SessionStore lifecycle", () => {
     }
   });
 
+  it("skips write and change event when diff stats are unchanged", async () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: null }), REPO);
+    store.setDiffForCwd("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 });
+    const before = store.list()[0]?.updatedAt;
+
+    let emitted = 0;
+    store.events.on("changed", () => {
+      emitted += 1;
+    });
+    store.setDiffForCwd("/repo/sub", { filesChanged: 1, insertions: 2, deletions: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(emitted).toBe(0);
+    expect(store.list()[0]?.updatedAt).toBe(before);
+  });
+
   it("excludes ended sessions from live cwds", () => {
     const store = makeStore();
     store.applyEvent(event({ type: "session-start", transcriptPath: null }), REPO);

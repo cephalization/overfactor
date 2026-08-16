@@ -7,6 +7,7 @@
 ```bash
 git submodule update --init && vp install && vp run -r build   # once per checkout
 pnpm overfactor install claude-code                            # once; writes ~/.claude/settings.json
+# Pi integration is project-local via .pi/settings.json; trust the repo, then /reload if needed
 vp run dev                                                     # daemon + app, hot reloading; Ctrl-C cleans up
 ```
 
@@ -21,12 +22,13 @@ Run the quick start, then walk the list. Each item states the expected result.
 1. **Daemon discovery** — Quit the daemon (`overfactor daemon stop`) with the app open: main pane shows "Daemon not running". Start it again: the app reconnects within ~2 s, header shows the port.
 2. **Track a repo (GUI)** — Repos → folder-plus button → pick a git repo: it appears in the list (basename, full path on hover). Pick a non-git directory: inline "Not a git repo" error, nothing tracked.
 3. **Track a repo (CLI, live)** — With the app open: `pnpm overfactor repo add <path>` — the repo appears in the sidebar without any restart.
-4. **Session appears** — Run `claude` inside a tracked repo and send a prompt: a session row appears within seconds, titled from your first prompt, with a pulsing green dot (working).
-5. **Lifecycle states** — While the agent runs tools: green/pulsing. When it asks for permission: amber (blocked). When its turn ends: gray (idle).
-6. **Diff stats** — Have the agent edit tracked files: the row's `+/−` line counts and file count update live (staged + unstaged vs HEAD; untracked files are not counted).
-7. **Untrack** — ✕ next to a repo removes it; new sessions in that repo no longer appear.
-8. **Restart resilience** — `overfactor daemon stop && overfactor daemon start`: the app reconnects on its own and previously seen sessions are still listed (sqlite persistence).
-9. **Session detail** — Click a session row: it highlights and the main pane shows its metadata (state, agent, diff stats, repo/transcript paths, timestamps). Diff review/transcript are later slices.
+4. **Claude session appears** — Run `claude` inside a tracked repo and send a prompt: a session row appears within seconds, titled from your first prompt, with a pulsing green dot (working).
+5. **Pi session appears** — Run `pi` in this trusted repo (use `/reload` if the integration was added after startup) and send a prompt: a Pi-labeled session row appears with the Pi session JSONL path and the same title/diff behavior.
+6. **Lifecycle states** — While either agent runs tools: green/pulsing; when its turn settles: gray (idle). Claude Code permission notifications additionally show amber (blocked); Pi currently exposes no equivalent general attention event.
+7. **Diff stats** — Have the agent edit tracked files: the row's `+/−` line counts and file count update live (staged + unstaged vs HEAD; untracked files are not counted).
+8. **Untrack** — ✕ next to a repo removes it; new sessions in that repo no longer appear.
+9. **Restart resilience** — `overfactor daemon stop && overfactor daemon start`: the app reconnects on its own and previously seen sessions are still listed (sqlite persistence).
+10. **Session detail** — Click a session row: it highlights and the main pane shows its metadata (state, agent, diff stats, repo/transcript paths, timestamps). Diff review/transcript are later slices.
 
 ## Agent testing (agent-browser)
 

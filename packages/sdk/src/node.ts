@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   type DaemonInfo,
   daemonInfoSchema,
+  type HookEvent,
+  hookEventSchema,
   type OverfactorConfig,
   overfactorConfigSchema,
 } from "./index.ts";
@@ -53,4 +55,34 @@ export async function readOverfactorConfig(): Promise<OverfactorConfig> {
 
 export function daemonBaseUrl(info: DaemonInfo): string {
   return `http://127.0.0.1:${info.port}`;
+}
+
+export const DEFAULT_POST_TIMEOUT_MS = 1500;
+
+export interface PostHookEventDependencies {
+  readDaemonInfo?: typeof readDaemonInfo;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * The one wire contract for integrations: validate the event, discover the
+ * daemon, POST with a bounded timeout. Returns "no-daemon" when discovery
+ * finds nothing; throws on validation or network failure — callers own the
+ * never-break-the-agent policy (catch/log/drop as appropriate).
+ */
+export async function postHookEvent(
+  event: HookEvent,
+  dependencies?: PostHookEventDependencies,
+): Promise<"delivered" | "no-daemon"> {
+  const validated = hookEventSchema.parse(event);
+  const info = await (dependencies?.readDaemonInfo ?? readDaemonInfo)();
+  if (info === null) return "no-daemon";
+  await (dependencies?.fetch ?? fetch)(`${daemonBaseUrl(info)}/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(validated),
+    signal: AbortSignal.timeout(dependencies?.timeoutMs ?? DEFAULT_POST_TIMEOUT_MS),
+  });
+  return "delivered";
 }

@@ -1,5 +1,6 @@
+import { watch as watchFs } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { serve, type ServerType } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { DaemonInfo, WsServerMessage } from "@overfactor/sdk";
@@ -9,11 +10,12 @@ import {
   readDaemonInfo,
   readOverfactorConfig,
 } from "@overfactor/sdk/node";
-import { watch, type FSWatcher } from "chokidar";
+import { watch, type FSWatcher as ChokidarWatcher } from "chokidar";
 import type { WSContext } from "hono/ws";
 import { createApp, DAEMON_VERSION } from "./app.ts";
 import { openDb } from "./db.ts";
 import { computeDiffStats } from "./diff.ts";
+import { GitIgnoreMatcher, isBuiltInIgnoredPath } from "./gitignore.ts";
 import { createLogger, type Logger } from "./logger.ts";
 import { SessionStore } from "./store.ts";
 
@@ -21,10 +23,16 @@ import { SessionStore } from "./store.ts";
 export const DEFAULT_PORT = 41417;
 
 const DIFF_DEBOUNCE_MS = 300;
+const WATCHER_REARM_DELAY_MS = 5000;
 
-function isIgnoredPath(path: string): boolean {
-  return /(^|\/)(\.git|node_modules)(\/|$)/.test(path);
-}
+/**
+ * Only macOS and Windows back `fs.watch({ recursive: true })` with the
+ * platform watcher (FSEvents / ReadDirectoryChangesW) and no startup crawl.
+ * On other platforms Node emulates recursion in JS with a synchronous
+ * full-tree scan and one inotify watch per file — worse than chokidar, which
+ * at least skips ignored subtrees during its crawl.
+ */
+const NATIVE_RECURSIVE_WATCH = process.platform === "darwin" || process.platform === "win32";
 
 export interface RunningDaemon {
   port: number;
@@ -54,10 +62,13 @@ export async function startDaemon(options?: {
   const store = new SessionStore(db);
   let config = await readOverfactorConfig();
 
+  let closing = false;
+
   // Debounced per-cwd diff recomputation.
   const diffTimers = new Map<string, NodeJS.Timeout>();
   const diffLog = log.child({ subsystem: "diff" });
   const scheduleDiff = (cwd: string): void => {
+    if (closing) return;
     const existing = diffTimers.get(cwd);
     if (existing !== undefined) clearTimeout(existing);
     diffTimers.set(
@@ -132,27 +143,89 @@ export async function startDaemon(options?: {
   // sessions in that repo. Watch the overfactor dir for config.json edits so
   // `overfactor repo add` applies without a restart.
   const watchLog = log.child({ subsystem: "watcher" });
-  let repoWatcher: FSWatcher | null = null;
+  const repoWatchers = new Map<string, () => void>();
+  const rearmTimers = new Set<NodeJS.Timeout>();
+
+  const handleRepoEvent = (repo: string, ignores: GitIgnoreMatcher, filename: string): void => {
+    // Built-in exclusion runs before EVERYTHING — a `.gitignore` inside
+    // node_modules must not wipe the matcher cache (pnpm install fires
+    // thousands of those).
+    if (isBuiltInIgnoredPath(filename)) return;
+    if (/(^|[\\/])\.gitignore$/.test(filename)) ignores.invalidate();
+    void ignores
+      .ignores(filename)
+      .then((ignored) => {
+        // The ignore check is async: by the time it resolves the daemon may
+        // be shutting down or the repo untracked — re-check both.
+        if (ignored || closing || !config.repos.includes(repo)) return;
+        for (const cwd of store.liveCwds(repo)) scheduleDiff(cwd);
+      })
+      .catch((error: unknown) =>
+        watchLog.warn({ repo, filename, error }, "gitignore match failed"),
+      );
+  };
+
+  const watchRepo = (repo: string): void => {
+    repoWatchers.get(repo)?.();
+    repoWatchers.delete(repo);
+    const ignores = new GitIgnoreMatcher(repo);
+
+    // Node closes a FSWatcher's handle before emitting 'error', so an errored
+    // watcher is dead. Re-arm after a delay instead of silently freezing diff
+    // stats for the repo until the next daemon restart.
+    const onError = (error: unknown): void => {
+      watchLog.warn({ repo, error }, "repo watcher error; re-arming");
+      repoWatchers.get(repo)?.();
+      repoWatchers.delete(repo);
+      const timer = setTimeout(() => {
+        rearmTimers.delete(timer);
+        if (!closing && config.repos.includes(repo)) watchRepo(repo);
+      }, WATCHER_REARM_DELAY_MS);
+      rearmTimers.add(timer);
+    };
+
+    try {
+      if (NATIVE_RECURSIVE_WATCH) {
+        // Platform watcher, no startup crawl — chokidar's recursive crawl of a
+        // large tracked monorepo has starved the daemon's event loop (see
+        // FINDINGS.md). Trade-off: .git/node_modules events still arrive and
+        // are dropped first thing in the handler.
+        const watcher = watchFs(repo, { recursive: true }, (_eventName, filename) => {
+          if (filename === null) return;
+          handleRepoEvent(repo, ignores, filename);
+        });
+        watcher.on("error", onError);
+        repoWatchers.set(repo, () => watcher.close());
+      } else {
+        const watcher = watch(repo, {
+          ignoreInitial: true,
+          ignored: (path) => isBuiltInIgnoredPath(relative(repo, path)),
+        });
+        watcher.on("all", (_eventName, path) =>
+          handleRepoEvent(repo, ignores, relative(repo, path)),
+        );
+        watcher.on("error", onError);
+        repoWatchers.set(repo, () => void watcher.close());
+      }
+    } catch (error) {
+      watchLog.warn({ repo, error }, "could not watch repo");
+    }
+  };
+
   const watchRepos = (repos: string[]): void => {
-    if (repoWatcher !== null) void repoWatcher.close();
-    // Ignore .git/node_modules at the watcher level — watching them in a
-    // monorepo burns descriptors and floods events.
-    repoWatcher =
-      repos.length === 0
-        ? null
-        : watch(repos, { ignoreInitial: true, ignored: (path) => isIgnoredPath(path) });
-    repoWatcher?.on("all", (_eventName, path) => {
-      if (isIgnoredPath(path)) return;
-      const repo = config.repos.find((r) => path === r || path.startsWith(`${r}/`));
-      if (repo === undefined) return;
-      for (const cwd of store.liveCwds(repo)) scheduleDiff(cwd);
-    });
-    repoWatcher?.on("error", (error) => watchLog.warn({ error }, "repo watcher error"));
+    for (const [repo, close] of repoWatchers) {
+      if (!repos.includes(repo)) {
+        close();
+        repoWatchers.delete(repo);
+      }
+    }
+    for (const repo of repos) {
+      if (!repoWatchers.has(repo)) watchRepo(repo);
+    }
   };
   watchRepos(config.repos);
 
-  let closing = false;
-  const configWatcher = watch(dir, { ignoreInitial: true, depth: 0 });
+  const configWatcher: ChokidarWatcher = watch(dir, { ignoreInitial: true, depth: 0 });
   configWatcher.on("error", (error) => watchLog.warn({ error }, "config watcher error"));
   configWatcher.on("all", (eventName, path) => {
     // Self-heal discovery: if daemon.json disappears while we're alive
@@ -177,15 +250,34 @@ export async function startDaemon(options?: {
   const close = async (): Promise<void> => {
     closing = true;
     for (const timer of diffTimers.values()) clearTimeout(timer);
+    diffTimers.clear();
+    for (const timer of rearmTimers) clearTimeout(timer);
+    rearmTimers.clear();
     await configWatcher.close();
-    if (repoWatcher !== null) await repoWatcher.close();
+    for (const closeWatcher of repoWatchers.values()) closeWatcher();
+    repoWatchers.clear();
     // Unpublish only if the file is still ours — a replacement daemon may
     // already have written its own daemon.json.
     const published = await readDaemonInfo();
     if (published?.pid === process.pid) {
       await rm(daemonInfoPath(), { force: true });
     }
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // server.close() waits for every open connection — upgraded WS sockets
+    // and keep-alive HTTP alike — so with the app connected it would never
+    // finish and every SIGTERM would end in the CLI's SIGKILL escalation.
+    // Close WS clients, then drop remaining connections.
+    for (const socket of sockets) {
+      try {
+        socket.close();
+      } catch {
+        // already gone
+      }
+    }
+    sockets.clear();
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      if ("closeAllConnections" in server) server.closeAllConnections();
+    });
   };
 
   return { port, close };

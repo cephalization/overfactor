@@ -97,8 +97,22 @@ export class SessionStore {
     void this.events.emit("changed");
   }
 
-  /** Records diff stats for every session running in `cwd` (they share a worktree). */
+  /**
+   * Records diff stats for every session running in `cwd` (they share a
+   * worktree). A recompute that lands on identical stats is a no-op — no
+   * `updatedAt` churn and no WS invalidation for noise events (e.g. files the
+   * ignore matcher doesn't know about, like global-gitignore entries).
+   */
   setDiffForCwd(cwd: string, stats: DiffStats): void {
+    const rows = this.db.select().from(sessions).where(eq(sessions.cwd, cwd)).all();
+    const changed = rows.some(
+      (row) =>
+        row.filesChanged !== stats.filesChanged ||
+        row.insertions !== stats.insertions ||
+        row.deletions !== stats.deletions,
+    );
+    if (!changed) return;
+
     const timestamp = this.now().toISOString();
     this.db
       .update(sessions)
