@@ -21,6 +21,24 @@ const contentBlockSchema = z.looseObject({
 });
 type ContentBlock = z.infer<typeof contentBlockSchema>;
 
+interface TextMessageContent {
+  kind: "text";
+  text: string;
+}
+
+interface BlockMessageContent {
+  kind: "blocks";
+  blocks: ContentBlock[];
+}
+
+const messageContentSchema = z.union([
+  z.string().transform((text): TextMessageContent => ({ kind: "text", text })),
+  z.array(contentBlockSchema).transform((blocks): BlockMessageContent => ({
+    kind: "blocks",
+    blocks,
+  })),
+]);
+
 const lineSchema = z.looseObject({
   type: z.string(),
   id: z.string().optional(),
@@ -33,7 +51,7 @@ const lineSchema = z.looseObject({
       model: z.string().optional(),
       toolCallId: z.string().optional(),
       toolName: z.string().optional(),
-      content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
+      content: messageContentSchema.optional(),
     })
     .optional(),
 });
@@ -96,17 +114,17 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
       parsed.message?.toolName ??
       (resultCallId === undefined ? undefined : toolNames.get(resultCallId));
 
-    if (typeof messageContent === "string") {
-      if (messageContent.trim() === "" && role !== "tool") continue;
+    if (messageContent?.kind === "text") {
+      if (messageContent.text.trim() === "" && role !== "tool") continue;
       const entry: TranscriptEntry = {
         id,
         role,
         markdown:
-          messageContent.trim() === ""
+          messageContent.text.trim() === ""
             ? "_No output._"
             : role === "tool"
-              ? `\`\`\`\n${truncate(messageContent, MAX_TOOL_LENGTH)}\n\`\`\``
-              : truncate(messageContent),
+              ? `\`\`\`\n${truncate(messageContent.text, MAX_TOOL_LENGTH)}\n\`\`\``
+              : truncate(messageContent.text),
         timestamp,
       };
       if (role === "tool") {
@@ -117,10 +135,10 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
       entries.push(entry);
       continue;
     }
-    if (!Array.isArray(messageContent)) continue;
+    if (messageContent?.kind !== "blocks") continue;
 
     let resultAdded = false;
-    messageContent.forEach((block: ContentBlock, index) => {
+    messageContent.blocks.forEach((block: ContentBlock, index) => {
       const entryId = `${id}:${index}`;
       if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
         const markdown =

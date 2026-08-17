@@ -85,6 +85,33 @@ describe("parseClaudeTranscript", () => {
     });
   });
 
+  it("keeps tool results with unfamiliar content shapes as empty results", () => {
+    const entries = parseClaudeTranscript(
+      jsonl([
+        {
+          type: "user",
+          uuid: "u1",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "future-format",
+                content: { output: "not understood yet" },
+              },
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      toolCallId: "future-format",
+      toolPhase: "result",
+      markdown: "_No output._",
+    });
+  });
+
   it("skips meta lines, sidechains, and malformed lines", () => {
     const entries = parseClaudeTranscript(
       [

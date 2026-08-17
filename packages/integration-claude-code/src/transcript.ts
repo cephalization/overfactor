@@ -11,16 +11,54 @@ import { z } from "zod";
 const MAX_ENTRY_LENGTH = 4000;
 const MAX_TOOL_INPUT_LENGTH = 600;
 
+const jsonValueSchema = z.json();
+type ToolInput = z.infer<typeof jsonValueSchema>;
+
+const toolResultBlockSchema = z.looseObject({
+  type: z.string(),
+  text: z.string().optional(),
+});
+
+const toolResultContentSchema = z.unknown().transform((content): string => {
+  const text = z.string().safeParse(content);
+  if (text.success) return text.data;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => {
+      const parsed = toolResultBlockSchema.safeParse(block);
+      return parsed.success && parsed.data.type === "text" ? (parsed.data.text ?? "") : "";
+    })
+    .join("\n");
+});
+
 const contentBlockSchema = z.looseObject({
   type: z.string(),
   text: z.string().optional(),
   name: z.string().optional(),
   id: z.string().optional(),
-  input: z.unknown().optional(),
+  input: jsonValueSchema.optional(),
   tool_use_id: z.string().optional(),
-  content: z.unknown().optional(),
+  content: toolResultContentSchema.optional(),
 });
 type ContentBlock = z.infer<typeof contentBlockSchema>;
+
+interface TextMessageContent {
+  kind: "text";
+  text: string;
+}
+
+interface BlockMessageContent {
+  kind: "blocks";
+  blocks: ContentBlock[];
+}
+
+const messageContentSchema = z.union([
+  z.string().transform((text): TextMessageContent => ({ kind: "text", text })),
+  z.array(contentBlockSchema).transform((blocks): BlockMessageContent => ({
+    kind: "blocks",
+    blocks,
+  })),
+]);
 
 const lineSchema = z.looseObject({
   type: z.string(),
@@ -33,7 +71,7 @@ const lineSchema = z.looseObject({
     .looseObject({
       role: z.string().optional(),
       model: z.string().optional(),
-      content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
+      content: messageContentSchema.optional(),
     })
     .optional(),
 });
@@ -53,20 +91,7 @@ function reportedModel(value: string | undefined): string | null {
   return model;
 }
 
-function flattenToolResult(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        const parsed = contentBlockSchema.safeParse(block);
-        return parsed.success && parsed.data.type === "text" ? (parsed.data.text ?? "") : "";
-      })
-      .join("\n");
-  }
-  return "";
-}
-
-function toolUseMarkdown(input: unknown): string {
+function toolUseMarkdown(input: ToolInput | undefined): string {
   let serialized: string;
   try {
     serialized = JSON.stringify(input) ?? "";
@@ -97,14 +122,14 @@ export function parseClaudeTranscript(content: string): TranscriptEntry[] {
     const timestamp = isoTimestamp(parsed.timestamp);
     const messageContent = parsed.message?.content;
 
-    if (typeof messageContent === "string") {
-      if (messageContent.trim() === "") continue;
-      entries.push({ id, role: "user", markdown: truncate(messageContent), timestamp });
+    if (messageContent?.kind === "text") {
+      if (messageContent.text.trim() === "") continue;
+      entries.push({ id, role: "user", markdown: truncate(messageContent.text), timestamp });
       continue;
     }
-    if (!Array.isArray(messageContent)) continue;
+    if (messageContent?.kind !== "blocks") continue;
 
-    messageContent.forEach((block: ContentBlock, index) => {
+    messageContent.blocks.forEach((block: ContentBlock, index) => {
       const entryId = `${id}:${index}`;
       if (block.type === "text" && block.text !== undefined && block.text.trim() !== "") {
         entries.push({
@@ -125,7 +150,7 @@ export function parseClaudeTranscript(content: string): TranscriptEntry[] {
           timestamp,
         });
       } else if (block.type === "tool_result") {
-        const text = flattenToolResult(block.content);
+        const text = block.content ?? "";
         entries.push({
           id: entryId,
           role: "tool",

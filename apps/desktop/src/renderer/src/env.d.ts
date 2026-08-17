@@ -1,13 +1,14 @@
-/**
- * The preload bridge. Everything arriving over it is `unknown` on purpose —
- * validate with SDK schemas at the call site.
- */
+import type { DaemonInfo } from "@overfactor/sdk";
+
+/** Values validated by preload before crossing into the renderer. */
 interface OverfactorBridge {
-  getDaemonInfo: () => Promise<unknown>;
-  pickDirectory: () => Promise<unknown>;
-  getPathForFile: (file: File) => unknown;
+  getDaemonInfo: () => Promise<DaemonInfo | null>;
+  pickDirectory: () => Promise<string | null>;
+  getPathForFile: (file: File) => string;
 }
 
-interface Window {
-  overfactor: OverfactorBridge;
+declare global {
+  interface Window {
+    overfactor: OverfactorBridge;
+  }
 }

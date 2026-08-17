@@ -12,6 +12,7 @@ import {
 } from "@overfactor/sdk/node";
 import { watch, type FSWatcher as ChokidarWatcher } from "chokidar";
 import type { WSContext } from "hono/ws";
+import { z } from "zod";
 import { extractSessionMetadata as extractClaudeMetadata } from "@overfactor/integration-claude-code/transcript";
 import { extractSessionMetadata as extractPiMetadata } from "@overfactor/integration-pi/transcript";
 import { createApp, DAEMON_VERSION, resolveRepoForCwd } from "./app.ts";
@@ -26,6 +27,12 @@ export const DEFAULT_PORT = 41417;
 
 const DIFF_DEBOUNCE_MS = 300;
 const WATCHER_REARM_DELAY_MS = 5000;
+
+const loggedErrorSchema = z.unknown().transform((raised): Error => {
+  if (raised instanceof Error) return raised;
+  const message = z.string().safeParse(raised);
+  return new Error(message.success ? message.data : "unknown error", { cause: raised });
+});
 
 interface TranscriptMetadata {
   title: string | null;
@@ -105,8 +112,11 @@ export async function startDaemon(options?: {
       cwd,
       setTimeout(() => {
         diffTimers.delete(cwd);
-        refreshWorktreeState(cwd, repoPath).catch((error: unknown) =>
-          diffLog.warn({ cwd, error }, "worktree state refresh failed"),
+        refreshWorktreeState(cwd, repoPath).catch((raised) =>
+          diffLog.warn(
+            { cwd, error: loggedErrorSchema.parse(raised) },
+            "worktree state refresh failed",
+          ),
         );
       }, DIFF_DEBOUNCE_MS),
     );
@@ -173,9 +183,9 @@ export async function startDaemon(options?: {
       // never take the daemon down. Evict the socket instead.
       try {
         socket.send(payload);
-      } catch (error) {
+      } catch (raised) {
         sockets.delete(socket);
-        log.debug({ error }, "dropped ws client on failed send");
+        log.debug({ error: loggedErrorSchema.parse(raised) }, "dropped ws client on failed send");
       }
     }
   };
@@ -293,8 +303,11 @@ export async function startDaemon(options?: {
         if (ignored || closing || !config.repos.includes(repo)) return;
         for (const cwd of store.liveCwds(repo)) scheduleDiff(cwd, repo);
       })
-      .catch((error: unknown) =>
-        watchLog.warn({ repo, filename, error }, "gitignore match failed"),
+      .catch((raised) =>
+        watchLog.warn(
+          { repo, filename, error: loggedErrorSchema.parse(raised) },
+          "gitignore match failed",
+        ),
       );
   };
 
@@ -306,7 +319,7 @@ export async function startDaemon(options?: {
     // Node closes a FSWatcher's handle before emitting 'error', so an errored
     // watcher is dead. Re-arm after a delay instead of silently freezing diff
     // stats for the repo until the next daemon restart.
-    const onError = (error: unknown): void => {
+    const onError = (error: Error): void => {
       watchLog.warn({ repo, error }, "repo watcher error; re-arming");
       repoWatchers.get(repo)?.();
       repoWatchers.delete(repo);
@@ -337,11 +350,11 @@ export async function startDaemon(options?: {
         watcher.on("all", (_eventName, path) =>
           handleRepoEvent(repo, ignores, relative(repo, path)),
         );
-        watcher.on("error", onError);
+        watcher.on("error", (raised) => onError(loggedErrorSchema.parse(raised)));
         repoWatchers.set(repo, () => void watcher.close());
       }
-    } catch (error) {
-      watchLog.warn({ repo, error }, "could not watch repo");
+    } catch (raised) {
+      watchLog.warn({ repo, error: loggedErrorSchema.parse(raised) }, "could not watch repo");
     }
   };
 
@@ -359,7 +372,9 @@ export async function startDaemon(options?: {
   watchRepos(config.repos);
 
   const configWatcher: ChokidarWatcher = watch(dir, { ignoreInitial: true, depth: 0 });
-  configWatcher.on("error", (error) => watchLog.warn({ error }, "config watcher error"));
+  configWatcher.on("error", (raised) =>
+    watchLog.warn({ error: loggedErrorSchema.parse(raised) }, "config watcher error"),
+  );
   configWatcher.on("all", (eventName, path) => {
     // Self-heal discovery: if daemon.json disappears while we're alive
     // (crashed sibling's cleanup, manual delete), republish it.
