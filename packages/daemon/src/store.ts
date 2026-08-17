@@ -24,6 +24,7 @@ function rowToSession(row: SessionRow, effectiveCrId: number | null): Session {
   return sessionSchema.parse({
     id: row.id,
     agent: row.agent,
+    model: row.model,
     title: row.title,
     state: row.state,
     cwd: row.cwd,
@@ -281,6 +282,27 @@ export class SessionStore {
       this.db
         .update(sessions)
         .set({ title, titleSource: "native", updatedAt: timestamp })
+        .where(eq(sessions.id, row.id))
+        .run();
+    }
+    void this.events.emit("changed");
+  }
+
+  /** Records the latest assistant model observed in an agent transcript. */
+  setLastUsedModel(transcriptPath: string, model: string): void {
+    const targets = this.db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.transcriptPath, transcriptPath))
+      .all()
+      .filter((row) => row.model !== model);
+    if (targets.length === 0) return;
+
+    const timestamp = this.now().toISOString();
+    for (const row of targets) {
+      this.db
+        .update(sessions)
+        .set({ model, updatedAt: timestamp })
         .where(eq(sessions.id, row.id))
         .run();
     }

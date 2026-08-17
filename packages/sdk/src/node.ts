@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  type ConversationMessage,
+  conversationInboxResponseSchema,
+  type ConversationMessageAck,
+  conversationMessageAckResponseSchema,
+  conversationMessageAckSchema,
   type DaemonInfo,
   daemonInfoSchema,
   type HookEvent,
@@ -85,4 +90,53 @@ export async function postHookEvent(
     signal: AbortSignal.timeout(dependencies?.timeoutMs ?? DEFAULT_POST_TIMEOUT_MS),
   });
   return "delivered";
+}
+
+export interface ConversationInboxDependencies {
+  readDaemonInfo?: typeof readDaemonInfo;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * Polls the daemon for the next app-authored message for an agent session.
+ * Missing discovery and unknown/stale sessions are normal and return null.
+ */
+export async function readConversationMessage(
+  sessionId: string,
+  dependencies?: ConversationInboxDependencies,
+): Promise<ConversationMessage | null> {
+  const info = await (dependencies?.readDaemonInfo ?? readDaemonInfo)();
+  if (info === null) return null;
+  const response = await (dependencies?.fetch ?? fetch)(
+    `${daemonBaseUrl(info)}/sessions/${encodeURIComponent(sessionId)}/messages/next`,
+    { signal: AbortSignal.timeout(dependencies?.timeoutMs ?? DEFAULT_POST_TIMEOUT_MS) },
+  );
+  if (response.status === 404 || response.status === 409) return null;
+  if (!response.ok) throw new Error(`conversation poll failed (${response.status})`);
+  return conversationInboxResponseSchema.parse(await response.json()).message;
+}
+
+/** Acknowledges a message only after the integration accepted it for delivery. */
+export async function acknowledgeConversationMessage(
+  sessionId: string,
+  acknowledgement: ConversationMessageAck,
+  dependencies?: ConversationInboxDependencies,
+): Promise<boolean> {
+  const validated = conversationMessageAckSchema.parse(acknowledgement);
+  const info = await (dependencies?.readDaemonInfo ?? readDaemonInfo)();
+  if (info === null) return false;
+  const response = await (dependencies?.fetch ?? fetch)(
+    `${daemonBaseUrl(info)}/sessions/${encodeURIComponent(sessionId)}/messages/ack`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validated),
+      signal: AbortSignal.timeout(dependencies?.timeoutMs ?? DEFAULT_POST_TIMEOUT_MS),
+    },
+  );
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`conversation acknowledgement failed (${response.status})`);
+  conversationMessageAckResponseSchema.parse(await response.json());
+  return true;
 }

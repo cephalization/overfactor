@@ -107,15 +107,29 @@ describe("parseClaudeTranscript", () => {
   });
 });
 
-describe("extractSessionTitle", () => {
-  it("returns the last ai-title, or null when absent", async () => {
-    const { extractSessionTitle } = await import("../src/transcript.ts");
+describe("extractSessionMetadata", () => {
+  it("returns the last generated title and assistant model", async () => {
+    const { extractSessionMetadata } = await import("../src/transcript.ts");
     const content = [
       JSON.stringify({ type: "ai-title", aiTitle: "First title" }),
-      JSON.stringify({ type: "user", uuid: "u1", message: { content: "hi" } }),
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", model: "claude-sonnet-4", content: [] },
+      }),
       JSON.stringify({ type: "ai-title", aiTitle: "Refined title" }),
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", model: "claude-fable-5", content: [] },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", model: "<synthetic>", content: [] },
+      }),
     ].join("\n");
-    expect(extractSessionTitle(content)).toBe("Refined title");
-    expect(extractSessionTitle("")).toBeNull();
+    expect(extractSessionMetadata(content)).toEqual({
+      title: "Refined title",
+      model: "claude-fable-5",
+    });
+    expect(extractSessionMetadata("")).toEqual({ title: null, model: null });
   });
 });

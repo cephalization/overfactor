@@ -12,8 +12,8 @@ import {
 } from "@overfactor/sdk/node";
 import { watch, type FSWatcher as ChokidarWatcher } from "chokidar";
 import type { WSContext } from "hono/ws";
-import { extractSessionTitle as extractClaudeTitle } from "@overfactor/integration-claude-code/transcript";
-import { extractSessionTitle as extractPiTitle } from "@overfactor/integration-pi/transcript";
+import { extractSessionMetadata as extractClaudeMetadata } from "@overfactor/integration-claude-code/transcript";
+import { extractSessionMetadata as extractPiMetadata } from "@overfactor/integration-pi/transcript";
 import { createApp, DAEMON_VERSION, resolveRepoForCwd } from "./app.ts";
 import { openDb } from "./db.ts";
 import { computeDiffStats, currentBranch, defaultBranch, mainWorktreeRoot } from "./diff.ts";
@@ -27,10 +27,15 @@ export const DEFAULT_PORT = 41417;
 const DIFF_DEBOUNCE_MS = 300;
 const WATCHER_REARM_DELAY_MS = 5000;
 
-function extractTitle(agent: string, content: string): string | null {
-  if (agent === "claude-code") return extractClaudeTitle(content);
-  if (agent === "pi") return extractPiTitle(content);
-  return null;
+interface TranscriptMetadata {
+  title: string | null;
+  model: string | null;
+}
+
+function extractTranscriptMetadata(agent: string, content: string): TranscriptMetadata {
+  if (agent === "claude-code") return extractClaudeMetadata(content);
+  if (agent === "pi") return extractPiMetadata(content);
+  return { title: null, model: null };
 }
 
 /**
@@ -180,11 +185,10 @@ export async function startDaemon(options?: {
   // Live sessions' transcript files are watched so the app's transcript pane
   // stays in sync as the agent talks. The watched set follows session state;
   // file changes broadcast a debounced "transcripts" invalidation and refresh
-  // the agent-generated session title (ai-title / session_info) — which also
-  // titles resumed sessions immediately, since their transcript already
-  // carries one.
+  // transcript-derived metadata: the native title (ai-title / session_info)
+  // and the model on the latest assistant message.
   const transcriptWatchers = new Map<string, ChokidarWatcher>();
-  const titleTimers = new Map<string, NodeJS.Timeout>();
+  const metadataTimers = new Map<string, NodeJS.Timeout>();
   let transcriptBroadcastTimer: NodeJS.Timeout | null = null;
   const broadcastTranscripts = (): void => {
     if (closing || transcriptBroadcastTimer !== null) return;
@@ -193,17 +197,19 @@ export async function startDaemon(options?: {
       broadcast("transcripts");
     }, DIFF_DEBOUNCE_MS);
   };
-  const refreshNativeTitle = (path: string, agent: string): void => {
-    const existing = titleTimers.get(path);
+  const refreshTranscriptMetadata = (path: string, agent: string): void => {
+    const existing = metadataTimers.get(path);
     if (existing !== undefined) clearTimeout(existing);
-    titleTimers.set(
+    metadataTimers.set(
       path,
       setTimeout(() => {
-        titleTimers.delete(path);
+        metadataTimers.delete(path);
         void readFile(path, "utf8")
           .then((content) => {
-            const title = extractTitle(agent, content);
-            if (title !== null && !closing) store.setNativeTitle(path, title);
+            if (closing) return;
+            const metadata = extractTranscriptMetadata(agent, content);
+            if (metadata.title !== null) store.setNativeTitle(path, metadata.title);
+            if (metadata.model !== null) store.setLastUsedModel(path, metadata.model);
           })
           .catch(() => {
             // transcript unreadable right now; the next change retries
@@ -225,7 +231,7 @@ export async function startDaemon(options?: {
       const watcher = watch(path, { ignoreInitial: true });
       watcher.on("all", () => {
         broadcastTranscripts();
-        refreshNativeTitle(path, agent);
+        refreshTranscriptMetadata(path, agent);
       });
       watcher.on("error", () => {
         // transcript may not exist yet; the sync on next session change retries
@@ -233,11 +239,20 @@ export async function startDaemon(options?: {
         transcriptWatchers.delete(path);
       });
       transcriptWatchers.set(path, watcher);
-      refreshNativeTitle(path, agent);
+      refreshTranscriptMetadata(path, agent);
     }
   };
   store.events.on("changed", syncTranscriptWatchers);
   syncTranscriptWatchers();
+  // Ended sessions are not watched, but their existing transcripts still
+  // backfill model/title metadata after a schema migration or daemon restart.
+  // Sessions that already recorded a model were fully refreshed while live, so
+  // re-parsing their transcripts on every startup would be repeated work.
+  for (const session of store.list()) {
+    if (session.transcriptPath !== null && session.model === null) {
+      refreshTranscriptMetadata(session.transcriptPath, session.agent);
+    }
+  }
 
   const server = await new Promise<ServerType>((resolve, reject) => {
     const created = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () =>
@@ -372,8 +387,8 @@ export async function startDaemon(options?: {
     for (const timer of diffTimers.values()) clearTimeout(timer);
     diffTimers.clear();
     if (transcriptBroadcastTimer !== null) clearTimeout(transcriptBroadcastTimer);
-    for (const timer of titleTimers.values()) clearTimeout(timer);
-    titleTimers.clear();
+    for (const timer of metadataTimers.values()) clearTimeout(timer);
+    metadataTimers.clear();
     for (const watcher of transcriptWatchers.values()) void watcher.close();
     transcriptWatchers.clear();
     for (const timer of rearmTimers) clearTimeout(timer);

@@ -1,4 +1,8 @@
-import { sessionSchema } from "@overfactor/sdk";
+import {
+  agentIntegrationManifestSchema,
+  conversationInboxResponseSchema,
+  sessionSchema,
+} from "@overfactor/sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createApp, resolveRepoForCwd } from "../src/app.ts";
@@ -33,6 +37,80 @@ describe("daemon app", () => {
     const sessions = z.array(sessionSchema).parse(await (await app.request("/sessions")).json());
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ id: "sess-1", state: "working", repoPath: "/repo" });
+  });
+
+  it("advertises integration capabilities and queues messages only for Pi", async () => {
+    const { app } = makeApp(["/repo"]);
+    const integrations = z
+      .array(agentIntegrationManifestSchema)
+      .parse(await (await app.request("/agents")).json());
+    expect(integrations).toEqual([
+      { agent: "claude-code", capabilities: [] },
+      { agent: "pi", capabilities: ["continue-conversation"] },
+    ]);
+
+    await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...startEvent, sessionId: "pi-1", agent: "pi" }),
+    });
+    const queued = await app.request("/sessions/pi-1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Continue from the app" }),
+    });
+    expect(queued.status).toBe(202);
+    const queuedBody = (await queued.json()) as { messageId: string };
+
+    // A Pi process can exit and resume the same native session. Keep accepted
+    // prompts available across that handoff instead of silently dropping them.
+    const ended = await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "session-end",
+        sessionId: "pi-1",
+        agent: "pi",
+        cwd: "/repo/sub",
+        reason: "quit",
+      }),
+    });
+    expect(ended.status).toBe(202);
+
+    const next = conversationInboxResponseSchema.parse(
+      await (await app.request("/sessions/pi-1/messages/next")).json(),
+    );
+    expect(next.message).toMatchObject({
+      id: queuedBody.messageId,
+      prompt: "Continue from the app",
+    });
+
+    const ack = await app.request("/sessions/pi-1/messages/ack", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messageId: queuedBody.messageId }),
+    });
+    expect(ack.status).toBe(200);
+    expect(
+      conversationInboxResponseSchema.parse(
+        await (await app.request("/sessions/pi-1/messages/next")).json(),
+      ).message,
+    ).toBeNull();
+
+    await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(startEvent),
+    });
+    expect(
+      (
+        await app.request("/sessions/sess-1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt: "Unsupported" }),
+        })
+      ).status,
+    ).toBe(409);
   });
 
   it("rejects malformed events with 400", async () => {

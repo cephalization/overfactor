@@ -5,6 +5,7 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   agent: text("agent").notNull(),
+  model: text("model"),
   title: text("title"),
   /** How the title was set: manual > native (agent-generated) > prompt. */
   titleSource: text("title_source"),
@@ -46,6 +47,7 @@ const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   agent TEXT NOT NULL,
+  model TEXT,
   title TEXT,
   title_source TEXT,
   state TEXT NOT NULL,
@@ -78,6 +80,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS change_requests_repo_branch
 
 /** Columns added after the sessions table first shipped; applied to old dbs. */
 const SESSION_COLUMN_MIGRATIONS: Record<string, string> = {
+  model: "ALTER TABLE sessions ADD COLUMN model TEXT",
   title_source: "ALTER TABLE sessions ADD COLUMN title_source TEXT",
   branch: "ALTER TABLE sessions ADD COLUMN branch TEXT",
   cr_id: "ALTER TABLE sessions ADD COLUMN cr_id INTEGER",

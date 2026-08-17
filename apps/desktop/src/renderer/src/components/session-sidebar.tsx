@@ -276,6 +276,12 @@ function SessionMenu({
                 </span>
                 <DiffStats session={session} />
               </span>
+              <span
+                className="w-full truncate pl-4 font-mono text-[10px] text-sidebar-foreground/55"
+                title={session.model ?? "Model not reported"}
+              >
+                {session.model ?? "Model not reported"}
+              </span>
             </SidebarMenuButton>
             <SidebarMenuAction
               showOnHover

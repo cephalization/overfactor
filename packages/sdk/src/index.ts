@@ -9,6 +9,29 @@ import { z } from "zod";
 export const agentKindSchema = z.enum(["claude-code", "pi"]);
 export type AgentKind = z.infer<typeof agentKindSchema>;
 
+/** Optional features an agent integration can expose to Overfactor clients. */
+export const agentCapabilitySchema = z.enum(["continue-conversation"]);
+export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
+
+/** Public manifest served by the daemon for each installed agent integration. */
+export const agentIntegrationManifestSchema = z.object({
+  agent: agentKindSchema,
+  capabilities: z.array(agentCapabilitySchema),
+});
+export type AgentIntegrationManifest = z.infer<typeof agentIntegrationManifestSchema>;
+
+export function agentSupportsCapability(
+  integrations: readonly AgentIntegrationManifest[],
+  agent: AgentKind,
+  capability: AgentCapability,
+): boolean {
+  return (
+    integrations
+      .find((integration) => integration.agent === agent)
+      ?.capabilities.includes(capability) ?? false
+  );
+}
+
 export const lifecycleStateSchema = z.enum(["working", "idle", "blocked", "ended"]);
 export type LifecycleState = z.infer<typeof lifecycleStateSchema>;
 
@@ -24,6 +47,8 @@ export const sessionSchema = z.object({
   /** The agent's native session id (e.g. Claude Code's `session_id`). */
   id: z.string().min(1),
   agent: agentKindSchema,
+  /** Most recent model reported by an assistant transcript entry. */
+  model: z.string().min(1).nullable(),
   /** Derived from the first user prompt; null until one arrives. */
   title: z.string().nullable(),
   state: lifecycleStateSchema,
@@ -122,6 +147,39 @@ export const sessionTranscriptSchema = z.object({
   totalCount: z.int().nonnegative(),
 });
 export type SessionTranscript = z.infer<typeof sessionTranscriptSchema>;
+
+/** App request to continue a conversation through a capable agent integration. */
+export const continueConversationRequestSchema = z.object({
+  prompt: z.string().trim().min(1).max(100_000),
+});
+export type ContinueConversationRequest = z.infer<typeof continueConversationRequestSchema>;
+
+export const continueConversationResponseSchema = z.object({
+  queued: z.literal(true),
+  messageId: z.uuid(),
+});
+export type ContinueConversationResponse = z.infer<typeof continueConversationResponseSchema>;
+
+/** One queued message delivered by the daemon to an agent integration. */
+export const conversationMessageSchema = z.object({
+  id: z.uuid(),
+  prompt: continueConversationRequestSchema.shape.prompt,
+  createdAt: z.iso.datetime(),
+});
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+
+export const conversationInboxResponseSchema = z.object({
+  message: conversationMessageSchema.nullable(),
+});
+export type ConversationInboxResponse = z.infer<typeof conversationInboxResponseSchema>;
+
+export const conversationMessageAckSchema = z.object({
+  messageId: z.uuid(),
+});
+export type ConversationMessageAck = z.infer<typeof conversationMessageAckSchema>;
+
+export const conversationMessageAckResponseSchema = z.object({ ok: z.literal(true) });
+export type ConversationMessageAckResponse = z.infer<typeof conversationMessageAckResponseSchema>;
 
 /** Messages the daemon pushes to app subscribers over WebSocket. */
 export const wsServerMessageSchema = z.discriminatedUnion("type", [

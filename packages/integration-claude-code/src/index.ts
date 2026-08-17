@@ -1,4 +1,10 @@
-import type { HookEvent } from "@overfactor/sdk";
+import type { AgentIntegrationManifest, HookEvent } from "@overfactor/sdk";
+
+/** Claude Code hooks are observational and cannot inject input into the live session. */
+export const claudeCodeIntegrationManifest = {
+  agent: "claude-code",
+  capabilities: [],
+} satisfies AgentIntegrationManifest;
 import { z } from "zod";
 
 /**

@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("database migrations", () => {
-  it("adds archived=false to an existing sessions table", async () => {
+  it("adds archived=false and model=null to an existing sessions table", async () => {
     const directory = await mkdtemp(join(tmpdir(), "overfactor-db-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "daemon.db");
@@ -46,6 +46,6 @@ describe("database migrations", () => {
     sqlite.close();
 
     const store = new SessionStore(openDb(path));
-    expect(store.get("session-1")?.archived).toBe(false);
+    expect(store.get("session-1")).toMatchObject({ archived: false, model: null });
   });
 });

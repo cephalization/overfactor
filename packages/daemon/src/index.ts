@@ -1,5 +1,6 @@
 export { createApp, cwdInRepo, DAEMON_VERSION, resolveRepoForCwd } from "./app.ts";
 export type { App, AppDeps, AppType } from "./app.ts";
+export { ConversationQueue } from "./conversation.ts";
 export { openDb, sessions } from "./db.ts";
 export type { Db, SessionRow } from "./db.ts";
 export { computeDiffStats } from "./diff.ts";

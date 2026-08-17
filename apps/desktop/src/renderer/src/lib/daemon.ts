@@ -1,6 +1,8 @@
 import { createDaemonClient } from "@overfactor/daemon/client";
 import {
+  agentIntegrationManifestSchema,
   changeRequestSchema,
+  continueConversationResponseSchema,
   type DaemonInfo,
   daemonInfoSchema,
   overfactorConfigSchema,
@@ -168,6 +170,18 @@ export function useSessionDiff(baseUrl: string, sessionId: string) {
   });
 }
 
+/** Installed agent integrations and the optional capabilities each advertises. */
+export function useAgentIntegrations(baseUrl: string) {
+  return useQuery({
+    queryKey: ["agents", baseUrl],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).agents.$get();
+      return z.array(agentIntegrationManifestSchema).parse(await response.json());
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 /** Change Requests from `GET /crs`; kept fresh by WS "crs" invalidations. */
 export function useCrs(baseUrl: string) {
   return useQuery({
@@ -196,6 +210,23 @@ export function useSessionTranscript(baseUrl: string, session: Session) {
       });
       if (!response.ok) throw new Error(`transcript request failed (${response.status})`);
       return sessionTranscriptSchema.parse(await response.json());
+    },
+  });
+}
+
+/** Queue a user-authored prompt for a capable live agent integration. */
+export function useContinueConversation(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({ sessionId, prompt }: { sessionId: string; prompt: string }) => {
+      const response = await createDaemonClient(baseUrl).sessions[":id"].messages.$post({
+        param: { id: sessionId },
+        json: { prompt },
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `message delivery failed (${response.status})`);
+      }
+      continueConversationResponseSchema.parse(await response.json());
     },
   });
 }

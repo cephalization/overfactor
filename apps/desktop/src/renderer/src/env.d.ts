@@ -5,6 +5,7 @@
 interface OverfactorBridge {
   getDaemonInfo: () => Promise<unknown>;
   pickDirectory: () => Promise<unknown>;
+  getPathForFile: (file: File) => unknown;
 }
 
 interface Window {

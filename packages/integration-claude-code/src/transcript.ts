@@ -28,9 +28,11 @@ const lineSchema = z.looseObject({
   timestamp: z.string().optional(),
   isMeta: z.boolean().optional(),
   isSidechain: z.boolean().optional(),
+  aiTitle: z.string().optional(),
   message: z
     .looseObject({
       role: z.string().optional(),
+      model: z.string().optional(),
       content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
     })
     .optional(),
@@ -43,6 +45,12 @@ function truncate(text: string, max = MAX_ENTRY_LENGTH): string {
 
 function isoTimestamp(value: string | undefined): string | undefined {
   return value !== undefined && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
+function reportedModel(value: string | undefined): string | null {
+  const model = value?.trim();
+  if (!model || (model.startsWith("<") && model.endsWith(">"))) return null;
+  return model;
 }
 
 function flattenToolResult(content: unknown): string {
@@ -136,25 +144,30 @@ export function parseClaudeTranscript(content: string): TranscriptEntry[] {
   return entries;
 }
 
-const titleLineSchema = z.looseObject({ type: z.string(), aiTitle: z.string().optional() });
+export interface ClaudeSessionMetadata {
+  title: string | null;
+  model: string | null;
+}
 
-/** Claude Code's own generated session title (last `ai-title` line), if any. */
-export function extractSessionTitle(content: string): string | null {
+/** Claude Code's generated title and most recent assistant model, if present. */
+export function extractSessionMetadata(content: string): ClaudeSessionMetadata {
   let title: string | null = null;
+  let model: string | null = null;
   for (const rawLine of content.split("\n")) {
-    if (!rawLine.includes('"ai-title"')) continue;
+    // Cheap prefilter: only ai-title and assistant model lines carry metadata.
+    // Runs on every transcript change, so full JSON parsing must stay rare.
+    if (!rawLine.includes('"ai-title"') && !rawLine.includes('"model"')) continue;
     try {
-      const parsed = titleLineSchema.parse(JSON.parse(rawLine));
-      if (
-        parsed.type === "ai-title" &&
-        parsed.aiTitle !== undefined &&
-        parsed.aiTitle.trim() !== ""
-      ) {
+      const parsed = lineSchema.parse(JSON.parse(rawLine));
+      if (parsed.type === "ai-title" && parsed.aiTitle?.trim()) {
         title = parsed.aiTitle.trim();
+      }
+      if (parsed.type === "assistant" && parsed.message?.role === "assistant") {
+        model = reportedModel(parsed.message.model) ?? model;
       }
     } catch {
       continue;
     }
   }
-  return title;
+  return { title, model };
 }

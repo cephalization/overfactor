@@ -26,6 +26,7 @@ describe("SessionStore lifecycle", () => {
     expect(session).toMatchObject({
       id: "sess-1",
       state: "working",
+      model: null,
       title: null,
       transcriptPath: "/t.jsonl",
       repoPath: REPO,
@@ -61,6 +62,17 @@ describe("SessionStore lifecycle", () => {
     const store = makeStore();
     store.applyEvent(event({ type: "activity", tool: "Edit" }), REPO);
     expect(store.list()[0]).toMatchObject({ id: "sess-1", state: "working", title: null });
+  });
+
+  it("records the latest model observed in the session transcript", () => {
+    const store = makeStore();
+    store.applyEvent(event({ type: "session-start", transcriptPath: "/t.jsonl" }), REPO);
+
+    store.setLastUsedModel("/t.jsonl", "claude-sonnet-4");
+    expect(store.get("sess-1")?.model).toBe("claude-sonnet-4");
+
+    store.setLastUsedModel("/t.jsonl", "claude-fable-5");
+    expect(store.get("sess-1")?.model).toBe("claude-fable-5");
   });
 
   it("records diff stats for all sessions sharing a cwd", () => {

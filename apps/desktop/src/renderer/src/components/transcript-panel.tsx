@@ -1,4 +1,4 @@
-import type { Session, TranscriptEntry } from "@overfactor/sdk";
+import { agentSupportsCapability, type Session, type TranscriptEntry } from "@overfactor/sdk";
 import {
   ChevronDown,
   ChevronRight,
@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
+import { ConversationComposer } from "@/components/conversation-composer.tsx";
 import { AGENT_LABELS } from "@/components/session-sidebar.tsx";
 import { Bubble, BubbleContent } from "@/components/ui/bubble.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -21,7 +22,7 @@ import {
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker.tsx";
 import { Message, MessageContent, MessageHeader } from "@/components/ui/message.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import { useSessionTranscript } from "@/lib/daemon.ts";
+import { useAgentIntegrations, useSessionTranscript } from "@/lib/daemon.ts";
 import { groupTranscriptEntries, summarizeToolCalls } from "@/lib/transcript-groups.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -255,6 +256,10 @@ export function TranscriptPanel({
   onCollapse: () => void;
 }) {
   const transcript = useSessionTranscript(baseUrl, session);
+  const integrations = useAgentIntegrations(baseUrl);
+  const canContinue =
+    session.state !== "ended" &&
+    agentSupportsCapability(integrations.data ?? [], session.agent, "continue-conversation");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pinnedToBottom = useRef(true);
 
@@ -278,11 +283,19 @@ export function TranscriptPanel({
           Transcript
         </Button>
 
-        {transcript.data !== undefined && transcript.data.totalCount > entryCount && (
-          <span className="ml-auto text-[10px] text-muted-foreground">
-            last {entryCount} of {transcript.data.totalCount}
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <span
+            className="max-w-40 truncate font-mono text-[10px] text-muted-foreground"
+            title={session.model ?? "Model not reported"}
+          >
+            {session.model ?? "Model not reported"}
           </span>
-        )}
+          {transcript.data !== undefined && transcript.data.totalCount > entryCount && (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              last {entryCount} of {transcript.data.totalCount}
+            </span>
+          )}
+        </div>
       </div>
       <div
         ref={scrollRef}
@@ -329,6 +342,7 @@ export function TranscriptPanel({
           )}
         </div>
       </div>
+      {canContinue && <ConversationComposer key={session.id} baseUrl={baseUrl} session={session} />}
     </div>
   );
 }

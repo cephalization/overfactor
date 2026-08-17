@@ -1,10 +1,50 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentIntegrationManifestSchema,
+  agentSupportsCapability,
+  continueConversationRequestSchema,
+  conversationMessageSchema,
   daemonInfoSchema,
   hookEventSchema,
   sessionSchema,
   transcriptEntrySchema,
 } from "../src/index.ts";
+
+describe("agent integration capabilities", () => {
+  it("lets clients discover optional features by agent", () => {
+    const integrations = [
+      agentIntegrationManifestSchema.parse({ agent: "claude-code", capabilities: [] }),
+      agentIntegrationManifestSchema.parse({
+        agent: "pi",
+        capabilities: ["continue-conversation"],
+      }),
+    ];
+
+    expect(agentSupportsCapability(integrations, "pi", "continue-conversation")).toBe(true);
+    expect(agentSupportsCapability(integrations, "claude-code", "continue-conversation")).toBe(
+      false,
+    );
+  });
+});
+
+describe("conversation schemas", () => {
+  it("validates queued continuation prompts", () => {
+    expect(continueConversationRequestSchema.parse({ prompt: "  keep going  " })).toEqual({
+      prompt: "keep going",
+    });
+    expect(
+      conversationMessageSchema.parse({
+        id: "00000000-0000-4000-8000-000000000000",
+        prompt: "keep going",
+        createdAt: "2026-08-16T12:00:00.000Z",
+      }).prompt,
+    ).toBe("keep going");
+  });
+
+  it("rejects empty prompts", () => {
+    expect(continueConversationRequestSchema.safeParse({ prompt: "   " }).success).toBe(false);
+  });
+});
 
 describe("hookEventSchema", () => {
   it("accepts a session-start event", () => {
@@ -44,6 +84,7 @@ describe("sessionSchema", () => {
     const session = sessionSchema.parse({
       id: "abc",
       agent: "claude-code",
+      model: "claude-fable-5",
       title: "Fix the flaky test",
       state: "working",
       cwd: "/repo",
@@ -63,6 +104,7 @@ describe("sessionSchema", () => {
     const result = sessionSchema.safeParse({
       id: "abc",
       agent: "claude-code",
+      model: null,
       title: null,
       state: "idle",
       cwd: "/repo",

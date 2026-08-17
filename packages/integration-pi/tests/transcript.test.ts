@@ -60,14 +60,19 @@ describe("parsePiTranscript", () => {
   });
 });
 
-describe("extractSessionTitle", () => {
-  it("returns the last session_info name, or null when absent", async () => {
-    const { extractSessionTitle } = await import("../src/transcript.ts");
+describe("extractSessionMetadata", () => {
+  it("returns the last session name and assistant model", async () => {
+    const { extractSessionMetadata } = await import("../src/transcript.ts");
     const content = [
       JSON.stringify({ type: "session", version: 3, id: "s" }),
       JSON.stringify({ type: "session_info", id: "i1", name: "#14949 — rewind race" }),
+      JSON.stringify({ type: "message", message: { role: "assistant", model: "gpt-5.5" } }),
+      JSON.stringify({ type: "message", message: { role: "assistant", model: "gpt-5.6-sol" } }),
     ].join("\n");
-    expect(extractSessionTitle(content)).toBe("#14949 — rewind race");
-    expect(extractSessionTitle("{}")).toBeNull();
+    expect(extractSessionMetadata(content)).toEqual({
+      title: "#14949 — rewind race",
+      model: "gpt-5.6-sol",
+    });
+    expect(extractSessionMetadata("{}")).toEqual({ title: null, model: null });
   });
 });

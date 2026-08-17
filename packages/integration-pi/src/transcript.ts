@@ -26,9 +26,11 @@ const lineSchema = z.looseObject({
   id: z.string().optional(),
   timestamp: z.string().optional(),
   summary: z.string().optional(),
+  name: z.string().optional(),
   message: z
     .looseObject({
       role: z.string().optional(),
+      model: z.string().optional(),
       toolCallId: z.string().optional(),
       toolName: z.string().optional(),
       content: z.union([z.string(), z.array(contentBlockSchema)]).optional(),
@@ -43,6 +45,12 @@ function truncate(text: string, max = MAX_ENTRY_LENGTH): string {
 
 function isoTimestamp(value: string | undefined): string | undefined {
   return value !== undefined && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
+function reportedModel(value: string | undefined): string | null {
+  const model = value?.trim();
+  if (!model || (model.startsWith("<") && model.endsWith(">"))) return null;
+  return model;
 }
 
 function roleFor(piRole: string | undefined): TranscriptEntry["role"] | null {
@@ -160,25 +168,31 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
   return entries;
 }
 
-const sessionInfoSchema = z.looseObject({ type: z.string(), name: z.string().optional() });
+export interface PiSessionMetadata {
+  title: string | null;
+  model: string | null;
+}
 
-/** Pi's own session name (last `session_info` line), if any. */
-export function extractSessionTitle(content: string): string | null {
+/** Pi's own session name and most recent assistant model, if present. */
+export function extractSessionMetadata(content: string): PiSessionMetadata {
   let title: string | null = null;
+  let model: string | null = null;
   for (const rawLine of content.split("\n")) {
-    if (!rawLine.includes('"session_info"')) continue;
+    // Cheap prefilter: only session_info and assistant model lines carry
+    // metadata. Runs on every transcript change, so full JSON parsing must
+    // stay rare.
+    if (!rawLine.includes('"session_info"') && !rawLine.includes('"model"')) continue;
     try {
-      const parsed = sessionInfoSchema.parse(JSON.parse(rawLine));
-      if (
-        parsed.type === "session_info" &&
-        parsed.name !== undefined &&
-        parsed.name.trim() !== ""
-      ) {
+      const parsed = lineSchema.parse(JSON.parse(rawLine));
+      if (parsed.type === "session_info" && parsed.name?.trim()) {
         title = parsed.name.trim();
+      }
+      if (parsed.type === "message" && parsed.message?.role === "assistant") {
+        model = reportedModel(parsed.message.model) ?? model;
       }
     } catch {
       continue;
     }
   }
-  return title;
+  return { title, model };
 }

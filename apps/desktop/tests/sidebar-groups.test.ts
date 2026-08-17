@@ -14,6 +14,7 @@ function session({
 }: Partial<Session> & Pick<Session, "id" | "repoPath">): Session {
   return {
     agent: "pi",
+    model: "gpt-5.6-sol",
     title: id,
     state: "idle",
     cwd: repoPath,
