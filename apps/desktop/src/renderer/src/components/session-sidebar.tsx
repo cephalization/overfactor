@@ -19,17 +19,17 @@ import {
 import { filterSidebarSessions, groupSidebarItems } from "@/lib/sidebar-groups.ts";
 import { cn } from "@/lib/utils.ts";
 
-export const STATE_STYLES: Record<LifecycleState, { label: string; dot: string }> = {
+export const STATE_STYLES = {
   working: { label: "Working", dot: "bg-emerald-500 animate-pulse" },
   idle: { label: "Idle", dot: "bg-zinc-400" },
   blocked: { label: "Blocked", dot: "bg-amber-500" },
   ended: { label: "Ended", dot: "bg-zinc-300" },
-};
+} satisfies Record<LifecycleState, { label: string; dot: string }>;
 
-export const AGENT_LABELS: Record<Session["agent"], string> = {
+export const AGENT_LABELS = {
   "claude-code": "Claude Code",
   pi: "pi",
-};
+} satisfies Record<Session["agent"], string>;
 
 const SESSION_STATES: LifecycleState[] = ["working", "idle", "blocked", "ended"];
 

@@ -28,9 +28,9 @@ interface ActiveConversationSubscription {
   stop: () => void;
 }
 
-const conversationSubscriptionsGlobal = globalThis as typeof globalThis & {
-  __overfactorPiConversationSubscriptions?: Map<string, () => void>;
-};
+declare global {
+  var __overfactorPiConversationSubscriptions: Map<string, () => void> | undefined;
+}
 
 /**
  * Pi can re-evaluate an extension without disposing module-level async work.
@@ -38,7 +38,7 @@ const conversationSubscriptionsGlobal = globalThis as typeof globalThis & {
  * leave competing pollers that deliver the same queued prompt twice.
  */
 function conversationSubscriptions(): Map<string, () => void> {
-  return (conversationSubscriptionsGlobal.__overfactorPiConversationSubscriptions ??= new Map());
+  return (globalThis.__overfactorPiConversationSubscriptions ??= new Map());
 }
 
 function identity(ctx: ExtensionContext): PiSessionIdentity {

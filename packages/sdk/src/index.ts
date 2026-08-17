@@ -149,8 +149,10 @@ export const sessionTranscriptSchema = z.object({
 export type SessionTranscript = z.infer<typeof sessionTranscriptSchema>;
 
 /** App request to continue a conversation through a capable agent integration. */
+const conversationPromptSchema = z.string().trim().min(1).max(100_000);
+
 export const continueConversationRequestSchema = z.object({
-  prompt: z.string().trim().min(1).max(100_000),
+  prompt: conversationPromptSchema,
 });
 export type ContinueConversationRequest = z.infer<typeof continueConversationRequestSchema>;
 
@@ -163,7 +165,7 @@ export type ContinueConversationResponse = z.infer<typeof continueConversationRe
 /** One queued message delivered by the daemon to an agent integration. */
 export const conversationMessageSchema = z.object({
   id: z.uuid(),
-  prompt: continueConversationRequestSchema.shape.prompt,
+  prompt: conversationPromptSchema,
   createdAt: z.iso.datetime(),
 });
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;

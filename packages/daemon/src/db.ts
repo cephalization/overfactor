@@ -79,13 +79,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS change_requests_repo_branch
 `;
 
 /** Columns added after the sessions table first shipped; applied to old dbs. */
-const SESSION_COLUMN_MIGRATIONS: Record<string, string> = {
+const SESSION_COLUMN_MIGRATIONS = {
   model: "ALTER TABLE sessions ADD COLUMN model TEXT",
   title_source: "ALTER TABLE sessions ADD COLUMN title_source TEXT",
   branch: "ALTER TABLE sessions ADD COLUMN branch TEXT",
   cr_id: "ALTER TABLE sessions ADD COLUMN cr_id INTEGER",
   archived: "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
-};
+} satisfies Record<string, string>;
 
 export type Db = ReturnType<typeof openDb>;
 
@@ -94,6 +94,7 @@ export function openDb(path: string) {
   const sqlite = new Database(path);
   sqlite.pragma("journal_mode = WAL");
   sqlite.exec(DDL);
+  // SAFETY: SQLite's table_info pragma returns rows containing a string name column.
   const existing = new Set(
     (sqlite.pragma("table_info(sessions)") as Array<{ name: string }>).map((c) => c.name),
   );

@@ -42,18 +42,23 @@ export const DIFF_OPTIONS_BASE = {
 } as const;
 
 type DiffStyle = "unified" | "split";
+type TreeStyle = React.CSSProperties & { "--trees-bg-override": string };
+
+const TREE_STYLE: TreeStyle = {
+  "--trees-bg-override": "var(--background)",
+};
 
 export function fileLabel(file: { name?: string; prevName?: string }): string {
   return file.name ?? file.prevName ?? "unknown file";
 }
 
-const GIT_STATUS_BY_CHANGE_TYPE: Record<FileDiffMetadata["type"], GitStatusEntry["status"]> = {
+const GIT_STATUS_BY_CHANGE_TYPE = {
   new: "added",
   deleted: "deleted",
   change: "modified",
   "rename-pure": "renamed",
   "rename-changed": "renamed",
-};
+} satisfies Record<FileDiffMetadata["type"], GitStatusEntry["status"]>;
 
 function ChangedFilesTree({ files }: { files: FileDiffMetadata[] }) {
   const paths = useMemo(() => files.map(fileLabel), [files]);
@@ -181,7 +186,7 @@ export function SessionDiff({ baseUrl, session }: { baseUrl: string; session: Se
             // Blend the tree into the page WITHOUT `transparent`: the tree's
             // middle-truncation masks clipped glyphs by painting --trees-bg
             // behind the "…" marker, so the value must be a real color.
-            style={{ "--trees-bg-override": "var(--background)" } as React.CSSProperties}
+            style={TREE_STYLE}
           >
             <ChangedFilesTree files={files} />
           </aside>

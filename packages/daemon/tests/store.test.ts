@@ -1,4 +1,5 @@
 import type { HookEvent } from "@overfactor/sdk";
+import { hookEventSchema } from "@overfactor/sdk";
 import { describe, expect, it } from "vitest";
 import { openDb } from "../src/db.ts";
 import { SessionStore } from "../src/store.ts";
@@ -10,12 +11,12 @@ function makeStore(): SessionStore {
 }
 
 function event(partial: Partial<HookEvent> & { type: HookEvent["type"] }): HookEvent {
-  return {
+  return hookEventSchema.parse({
     sessionId: "sess-1",
     agent: "claude-code",
     cwd: "/repo/sub",
     ...partial,
-  } as HookEvent;
+  });
 }
 
 describe("SessionStore lifecycle", () => {

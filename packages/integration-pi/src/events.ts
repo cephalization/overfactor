@@ -27,7 +27,8 @@ export function userPromptEvent(identity: PiSessionIdentity, prompt: string): Ho
 }
 
 export function activityEvent(identity: PiSessionIdentity, tool?: string): HookEvent {
-  return { type: "activity", ...base(identity), ...(tool === undefined ? {} : { tool }) };
+  if (tool === undefined) return { type: "activity", ...base(identity) };
+  return { type: "activity", ...base(identity), tool };
 }
 
 export function stoppedEvent(identity: PiSessionIdentity): HookEvent {
@@ -35,5 +36,6 @@ export function stoppedEvent(identity: PiSessionIdentity): HookEvent {
 }
 
 export function sessionEndEvent(identity: PiSessionIdentity, reason?: string): HookEvent {
-  return { type: "session-end", ...base(identity), ...(reason === undefined ? {} : { reason }) };
+  if (reason === undefined) return { type: "session-end", ...base(identity) };
+  return { type: "session-end", ...base(identity), reason };
 }

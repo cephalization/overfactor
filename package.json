@@ -10,8 +10,10 @@
   },
   "devDependencies": {
     "@overfactor/daemon": "workspace:*",
+    "@oxlint/plugins": "catalog:",
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "concurrently": "catalog:",
+    "oxlint": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

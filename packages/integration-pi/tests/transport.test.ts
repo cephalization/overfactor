@@ -1,5 +1,6 @@
 import type { DaemonInfo, HookEvent } from "@overfactor/sdk";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { createHookEventSink } from "../src/transport.ts";
 
 const daemonInfo: DaemonInfo = {
@@ -30,8 +31,8 @@ describe("createHookEventSink", () => {
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("http://127.0.0.1:41417/events");
     expect(init).toMatchObject({ method: "POST" });
-    if (typeof init?.body !== "string") throw new Error("expected a JSON request body");
-    expect(JSON.parse(init.body)).toEqual(stoppedEvent);
+    const body = z.string().parse(init?.body);
+    expect(JSON.parse(body)).toEqual(stoppedEvent);
   });
 
   it("drops events silently when the daemon is absent", async () => {

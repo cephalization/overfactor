@@ -87,7 +87,10 @@ export function ConversationComposer({ baseUrl, session }: { baseUrl: string; se
       }}
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setDragging(false);
+        }
       }}
       onDrop={onDrop}
       className={cn(

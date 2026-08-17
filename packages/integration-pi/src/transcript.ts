@@ -98,7 +98,7 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
 
     if (typeof messageContent === "string") {
       if (messageContent.trim() === "" && role !== "tool") continue;
-      entries.push({
+      const entry: TranscriptEntry = {
         id,
         role,
         markdown:
@@ -107,11 +107,14 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
             : role === "tool"
               ? `\`\`\`\n${truncate(messageContent, MAX_TOOL_LENGTH)}\n\`\`\``
               : truncate(messageContent),
-        ...(role === "tool"
-          ? { toolName: resultToolName, toolCallId: resultCallId, toolPhase: "result" as const }
-          : {}),
         timestamp,
-      });
+      };
+      if (role === "tool") {
+        entry.toolName = resultToolName;
+        entry.toolCallId = resultCallId;
+        entry.toolPhase = "result";
+      }
+      entries.push(entry);
       continue;
     }
     if (!Array.isArray(messageContent)) continue;
@@ -124,15 +127,18 @@ export function parsePiTranscript(content: string): TranscriptEntry[] {
           role === "tool"
             ? `\`\`\`\n${truncate(block.text, MAX_TOOL_LENGTH)}\n\`\`\``
             : truncate(block.text);
-        entries.push({
+        const entry: TranscriptEntry = {
           id: entryId,
           role,
           markdown,
-          ...(role === "tool"
-            ? { toolName: resultToolName, toolCallId: resultCallId, toolPhase: "result" as const }
-            : {}),
           timestamp,
-        });
+        };
+        if (role === "tool") {
+          entry.toolName = resultToolName;
+          entry.toolCallId = resultCallId;
+          entry.toolPhase = "result";
+        }
+        entries.push(entry);
         if (role === "tool") resultAdded = true;
       } else if (block.type === "toolCall" && block.name !== undefined) {
         let serialized: string;

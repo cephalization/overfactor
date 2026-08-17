@@ -31,10 +31,10 @@ export const DAEMON_VERSION = "0.0.0";
 
 const TRANSCRIPT_TAIL_LENGTH = 200;
 
-const TRANSCRIPT_PARSERS: Record<AgentKind, (content: string) => TranscriptEntry[]> = {
+const TRANSCRIPT_PARSERS = {
   "claude-code": parseClaudeTranscript,
   pi: parsePiTranscript,
-};
+} satisfies Record<AgentKind, (content: string) => TranscriptEntry[]>;
 
 /** True when `cwd` is `repo` or a directory inside it. */
 export function cwdInRepo(cwd: string, repo: string): boolean {
@@ -135,11 +135,13 @@ export function createApp(deps: AppDeps) {
           return c.json({ error: "unknown-session" as const }, 404);
         }
         if (session.transcriptPath === null) {
-          return c.json({ entries: [] as TranscriptEntry[], totalCount: 0 });
+          const entries: TranscriptEntry[] = [];
+          return c.json({ entries, totalCount: 0 });
         }
         const raw = await readFile(session.transcriptPath, "utf8").catch(() => null);
         if (raw === null) {
-          return c.json({ entries: [] as TranscriptEntry[], totalCount: 0 });
+          const entries: TranscriptEntry[] = [];
+          return c.json({ entries, totalCount: 0 });
         }
         const entries = TRANSCRIPT_PARSERS[session.agent](raw);
         return c.json({

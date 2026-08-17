@@ -6,6 +6,8 @@ import { type ChangeRequestRow, type Db, type SessionRow, changeRequests, sessio
 
 const TITLE_MAX_LENGTH = 80;
 
+type SessionUpdate = Partial<typeof sessions.$inferInsert>;
+
 function titleFromPrompt(prompt: string): string | null {
   const firstLine = prompt.split("\n", 1)[0]?.trim() ?? "";
   if (firstLine.length === 0) return null;
@@ -105,20 +107,18 @@ export class SessionStore {
         })
         .run();
     } else {
-      this.db
-        .update(sessions)
-        .set({
-          state,
-          cwd: event.cwd,
-          repoPath,
-          updatedAt: timestamp,
-          ...(promptTitle !== null && existing.title === null
-            ? { title: promptTitle, titleSource: "prompt" as const }
-            : {}),
-          ...(event.type === "session-start" ? { transcriptPath: event.transcriptPath } : {}),
-        })
-        .where(eq(sessions.id, event.sessionId))
-        .run();
+      const updates: SessionUpdate = {
+        state,
+        cwd: event.cwd,
+        repoPath,
+        updatedAt: timestamp,
+      };
+      if (promptTitle !== null && existing.title === null) {
+        updates.title = promptTitle;
+        updates.titleSource = "prompt";
+      }
+      if (event.type === "session-start") updates.transcriptPath = event.transcriptPath;
+      this.db.update(sessions).set(updates).where(eq(sessions.id, event.sessionId)).run();
     }
 
     void this.events.emit("changed");
@@ -145,21 +145,14 @@ export class SessionStore {
     if (!statsChanged && !branchChanged) return;
 
     const timestamp = this.now().toISOString();
-    this.db
-      .update(sessions)
-      .set({
-        ...(stats === null
-          ? {}
-          : {
-              filesChanged: stats.filesChanged,
-              insertions: stats.insertions,
-              deletions: stats.deletions,
-            }),
-        ...(branch === null ? {} : { branch }),
-        updatedAt: timestamp,
-      })
-      .where(eq(sessions.cwd, cwd))
-      .run();
+    const updates: SessionUpdate = { updatedAt: timestamp };
+    if (stats !== null) {
+      updates.filesChanged = stats.filesChanged;
+      updates.insertions = stats.insertions;
+      updates.deletions = stats.deletions;
+    }
+    if (branch !== null) updates.branch = branch;
+    this.db.update(sessions).set(updates).where(eq(sessions.cwd, cwd)).run();
     void this.events.emit("changed");
   }
 

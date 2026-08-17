@@ -1,7 +1,10 @@
 import {
   agentIntegrationManifestSchema,
+  continueConversationResponseSchema,
   conversationInboxResponseSchema,
+  sessionDiffSchema,
   sessionSchema,
+  sessionTranscriptSchema,
 } from "@overfactor/sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -60,7 +63,7 @@ describe("daemon app", () => {
       body: JSON.stringify({ prompt: "Continue from the app" }),
     });
     expect(queued.status).toBe(202);
-    const queuedBody = (await queued.json()) as { messageId: string };
+    const queuedBody = continueConversationResponseSchema.parse(await queued.json());
 
     // A Pi process can exit and resume the same native session. Keep accepted
     // prompts available across that handoff instead of silently dropping them.
@@ -201,7 +204,7 @@ describe("daemon app", () => {
 
     const diff = await app.request("/sessions/sess-1/diff");
     expect(diff.status).toBe(200);
-    const body = (await diff.json()) as { patch: string | null };
+    const body = sessionDiffSchema.parse(await diff.json());
     expect(body.patch).toContain("diff --git a/a.txt b/a.txt");
     expect(body.patch).toContain("+two");
 
@@ -237,10 +240,7 @@ describe("daemon app", () => {
 
     const response = await app.request("/sessions/sess-1/transcript");
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      entries: Array<{ markdown: string }>;
-      totalCount: number;
-    };
+    const body = sessionTranscriptSchema.parse(await response.json());
     expect(body.totalCount).toBe(2);
     expect(body.entries.map((e) => e.markdown)).toEqual(["hello agent", "hello human"]);
 

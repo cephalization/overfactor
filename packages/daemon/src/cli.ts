@@ -14,11 +14,13 @@ import {
   readOverfactorConfig,
 } from "@overfactor/sdk/node";
 import { defineCommand, runMain } from "citty";
+import { z } from "zod";
 import { createLogger } from "./logger.ts";
 import { addRepo } from "./repos.ts";
 import { DEFAULT_PORT, startDaemon } from "./server.ts";
 
 const execFileAsync = promisify(execFile);
+const errnoExceptionSchema = z.object({ code: z.string().optional() });
 
 async function probeHealth(port: number): Promise<{ port: number; pid: number } | null> {
   try {
@@ -37,6 +39,11 @@ interface DaemonProcess {
   port: number;
   pid: number;
 }
+
+type PortListener =
+  | { status: "listening"; pid: number }
+  | { status: "free" }
+  | { status: "unknown" };
 
 function fallbackPort(): number {
   return process.env.OVERFACTOR_PORT !== undefined
@@ -69,13 +76,16 @@ function killProcess(pid: number, signal: NodeJS.Signals): void {
  * the recorded pid to an innocent process. "free" means nothing listens;
  * "unknown" means lsof is unavailable and we must not guess.
  */
-async function portListenerPid(port: number): Promise<number | "free" | "unknown"> {
+async function portListenerPid(port: number): Promise<PortListener> {
   try {
     const { stdout } = await execFileAsync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"]);
     const pid = Number.parseInt(stdout.trim().split("\n")[0] ?? "", 10);
-    return Number.isNaN(pid) ? "free" : pid;
+    return Number.isNaN(pid) ? { status: "free" } : { status: "listening", pid };
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "unknown" : "free";
+    const parsed = errnoExceptionSchema.safeParse(error);
+    return parsed.success && parsed.data.code === "ENOENT"
+      ? { status: "unknown" }
+      : { status: "free" };
   }
 }
 
@@ -119,9 +129,9 @@ const daemonStart = defineCommand({
     const info = await readDaemonInfo();
     const port = info?.port ?? fallbackPort();
     const owner = await portListenerPid(port);
-    if (typeof owner === "number") {
+    if (owner.status === "listening") {
       throw new Error(
-        `an unresponsive daemon (pid ${owner}) holds port ${port}; run \`overfactor daemon stop\``,
+        `an unresponsive daemon (pid ${owner.pid}) holds port ${port}; run \`overfactor daemon stop\``,
       );
     }
     if (args.foreground) {
@@ -178,10 +188,10 @@ const daemonStop = defineCommand({
       const info = await readDaemonInfo();
       const port = info?.port ?? fallbackPort();
       const owner = await portListenerPid(port);
-      if (typeof owner === "number") {
-        console.log(`daemon is unresponsive (pid ${owner}, port ${port}); stopping it`);
-        target = { pid: owner, port };
-      } else if (owner === "unknown" && info !== null && processExists(info.pid)) {
+      if (owner.status === "listening") {
+        console.log(`daemon is unresponsive (pid ${owner.pid}, port ${port}); stopping it`);
+        target = { pid: owner.pid, port };
+      } else if (owner.status === "unknown" && info !== null && processExists(info.pid)) {
         throw new Error(
           `cannot verify pid ${info.pid} owns port ${port} (lsof unavailable); not killing it — inspect and stop it manually`,
         );
@@ -229,8 +239,8 @@ const daemonStatus = defineCommand({
     const info = await readDaemonInfo();
     const port = info?.port ?? fallbackPort();
     const owner = await portListenerPid(port);
-    if (typeof owner === "number") {
-      console.log(`daemon process unresponsive (pid ${owner}, port ${port})`);
+    if (owner.status === "listening") {
+      console.log(`daemon process unresponsive (pid ${owner.pid}, port ${port})`);
     } else if (info !== null) {
       console.log("daemon is not running (stale daemon.json; `overfactor daemon stop` cleans it)");
     } else {

@@ -76,10 +76,11 @@ export async function installClaudeCodeIntegration(
           HOOK_MARKERS.some((marker) => hook.command?.includes(marker) ?? false),
         ),
     );
-    entries.push({
-      ...(event === "PreToolUse" || event === "PostToolUse" ? { matcher: "*" } : {}),
+    const entry: z.infer<typeof hookEntrySchema> = {
       hooks: [{ type: "command", command: hookCommand }],
-    });
+    };
+    if (event === "PreToolUse" || event === "PostToolUse") entry.matcher = "*";
+    entries.push(entry);
     hooks[event] = entries;
   }
 

@@ -22,6 +22,7 @@ import { z } from "zod";
 export const queryClient = new QueryClient();
 
 const POLL_INTERVAL_MS = 2000;
+const errorResponseSchema = z.object({ error: z.string().optional() }).nullable();
 
 /**
  * Polls the main process for daemon.json (validated — it's a file off disk).
@@ -223,8 +224,9 @@ export function useContinueConversation(baseUrl: string) {
         json: { prompt },
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `message delivery failed (${response.status})`);
+        const parsed = errorResponseSchema.safeParse(await response.json().catch(() => null));
+        const error = parsed.success ? parsed.data?.error : undefined;
+        throw new Error(error ?? `message delivery failed (${response.status})`);
       }
       continueConversationResponseSchema.parse(await response.json());
     },
