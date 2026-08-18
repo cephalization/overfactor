@@ -1,7 +1,10 @@
 import {
   agentIntegrationManifestSchema,
+  changeRequestSchema,
   continueConversationResponseSchema,
   conversationInboxResponseSchema,
+  repoBranchesResponseSchema,
+  reviewResponseSchema,
   sessionDiffSchema,
   sessionSchema,
   sessionTranscriptSchema,
@@ -10,7 +13,10 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createApp, resolveRepoForCwd } from "../src/app.ts";
 import { openDb } from "../src/db.ts";
+import type { ReviewTriggerOutcome } from "../src/review.ts";
 import { SessionStore } from "../src/store.ts";
+
+const trackedCrResponseSchema = z.object({ cr: changeRequestSchema });
 
 function makeApp(repos: string[]) {
   const store = new SessionStore(openDb(":memory:"));
@@ -48,7 +54,7 @@ describe("daemon app", () => {
       .array(agentIntegrationManifestSchema)
       .parse(await (await app.request("/agents")).json());
     expect(integrations).toEqual([
-      { agent: "claude-code", capabilities: [] },
+      { agent: "claude-code", capabilities: ["generate-review"] },
       { agent: "pi", capabilities: ["continue-conversation"] },
     ]);
 
@@ -267,5 +273,179 @@ describe("resolveRepoForCwd", () => {
 
   it("prefers the longest matching repo", () => {
     expect(resolveRepoForCwd(["/repo", "/repo/nested"], "/repo/nested/x")).toBe("/repo/nested");
+  });
+});
+
+describe("review routes", () => {
+  const reviewGroups = [{ name: "G", summary: "S.", files: ["a.txt"] }];
+  const subject = { repoPath: "/repo", branch: "main" };
+
+  function makeReviewApp() {
+    const store = new SessionStore(openDb(":memory:"));
+    const outcomes: ReviewTriggerOutcome[] = [];
+    const triggeredModels: Array<string | null> = [];
+    const app = createApp({
+      store,
+      resolveRepo: async () => "/repo",
+      review: {
+        get: async (requested) => ({
+          review: store.getReview(requested),
+          patch: "diff --git a/a.txt b/a.txt",
+        }),
+        trigger: async (_requested, model) => {
+          triggeredModels.push(model);
+          return outcomes.shift() ?? "started";
+        },
+      },
+    });
+    return { app, store, outcomes, triggeredModels };
+  }
+
+  it("503s when no runner is wired", async () => {
+    const { app } = makeApp(["/repo"]);
+    expect((await app.request("/reviews?repoPath=/repo&branch=main")).status).toBe(503);
+    expect(
+      (
+        await app.request("/reviews/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(subject),
+        })
+      ).status,
+    ).toBe(503);
+  });
+
+  it("serves the branch review with its patch and validates the subject", async () => {
+    const { app, store } = makeReviewApp();
+    store.beginReview(subject, "claude-code", null);
+    store.completeReview(subject, reviewGroups, "hash");
+
+    const response = await app.request(
+      `/reviews?repoPath=${encodeURIComponent(subject.repoPath)}&branch=${subject.branch}`,
+    );
+    expect(response.status).toBe(200);
+    const body = reviewResponseSchema.parse(await response.json());
+    expect(body.review?.status).toBe("ready");
+    expect(body.review?.branch).toBe("main");
+    expect(body.patch).toContain("diff --git");
+
+    // A different branch has no review yet but still answers with the patch.
+    const empty = reviewResponseSchema.parse(
+      await (await app.request("/reviews?repoPath=/repo&branch=other")).json(),
+    );
+    expect(empty.review).toBeNull();
+
+    expect((await app.request("/reviews?repoPath=/repo")).status).toBe(400);
+  });
+
+  it("maps trigger outcomes onto statuses and forwards the model override", async () => {
+    const { app, outcomes, triggeredModels } = makeReviewApp();
+    const generate = (body: string) =>
+      app.request("/reviews/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+
+    expect((await generate(JSON.stringify(subject))).status).toBe(202);
+    expect((await generate(JSON.stringify({ ...subject, model: "haiku" }))).status).toBe(202);
+    expect(triggeredModels).toEqual([null, "haiku"]);
+    outcomes.push("empty-diff");
+    const conflict = await generate(JSON.stringify(subject));
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toEqual({ error: "empty-diff" });
+    expect((await generate(JSON.stringify({ repoPath: "/repo" }))).status).toBe(400);
+  });
+
+  it("persists reviewed marks and 404s unknown review groups", async () => {
+    const { app, store } = makeReviewApp();
+    const review = store.beginReview(subject, "claude-code", null);
+    store.completeReview(subject, reviewGroups, "hash");
+
+    const mark = await app.request(`/reviews/${review.id}/groups`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ group: "G", reviewed: true }),
+    });
+    expect(mark.status).toBe(200);
+    expect(store.getReview(subject)?.reviewedGroups).toEqual(["G"]);
+
+    const unknown = await app.request(`/reviews/${review.id}/groups`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ group: "Nope", reviewed: true }),
+    });
+    expect(unknown.status).toBe(404);
+  });
+});
+
+describe("branch tracking routes", () => {
+  function makeTrackingApp() {
+    const store = new SessionStore(openDb(":memory:"));
+    const app = createApp({
+      store,
+      resolveRepo: async () => "/repo",
+      branchTracking: {
+        listBranches: async () => ["feat/x", "main"],
+        defaultBranchFor: async () => "main",
+        trackBranch: async (repoPath, branch) => store.ensureChangeRequest(repoPath, branch),
+        trackPr: async (repoPath) => {
+          const cr = store.ensureChangeRequest(repoPath, "feat/pr");
+          store.setChangeRequestPr(cr.id, {
+            number: 7,
+            state: "open",
+            url: "https://github.com/o/r/pull/7",
+            title: "PR title",
+          });
+          return store.findChangeRequest(repoPath, "feat/pr") ?? cr;
+        },
+      },
+    });
+    return { app, store };
+  }
+
+  it("503s when tracking is not wired", async () => {
+    const { app } = makeApp(["/repo"]);
+    expect((await app.request("/repos/branches?path=/repo")).status).toBe(503);
+  });
+
+  it("lists branches with the default branch identified", async () => {
+    const { app } = makeTrackingApp();
+    const response = await app.request("/repos/branches?path=/repo");
+    expect(response.status).toBe(200);
+    expect(repoBranchesResponseSchema.parse(await response.json())).toEqual({
+      branches: ["feat/x", "main"],
+      defaultBranch: "main",
+    });
+  });
+
+  it("tracks a branch but rejects the default branch", async () => {
+    const { app, store } = makeTrackingApp();
+    const track = (branch: string) =>
+      app.request("/repos/branch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "/repo", branch }),
+      });
+
+    const ok = await track("feat/x");
+    expect(ok.status).toBe(200);
+    expect(store.findChangeRequest("/repo", "feat/x")).not.toBeNull();
+
+    const rejected = await track("main");
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({ error: "default-branch" });
+  });
+
+  it("tracks a PR and returns the stamped CR", async () => {
+    const { app } = makeTrackingApp();
+    const response = await app.request("/repos/pr", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/repo", url: "https://github.com/o/r/pull/7" }),
+    });
+    expect(response.status).toBe(200);
+    const body = trackedCrResponseSchema.parse(await response.json());
+    expect(body.cr).toMatchObject({ branch: "feat/pr", prNumber: 7, title: "PR title" });
   });
 });

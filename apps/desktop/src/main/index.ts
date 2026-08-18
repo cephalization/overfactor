@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { readDaemonInfo } from "@overfactor/sdk/node";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 // Agent/CI hook: expose the Chrome DevTools Protocol so tools like
 // agent-browser can drive the app (see TESTING.md). Must be set before ready.
@@ -19,6 +19,13 @@ function createWindow(): void {
       // isolation (the actual security boundary here) stays on.
       sandbox: false,
     },
+  });
+
+  // In-app links (PR URLs) open in the system browser, never a new
+  // Electron window.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://")) void shell.openExternal(url);
+    return { action: "deny" };
   });
 
   if (process.env.ELECTRON_RENDERER_URL !== undefined) {

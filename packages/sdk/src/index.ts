@@ -10,7 +10,7 @@ export const agentKindSchema = z.enum(["claude-code", "pi"]);
 export type AgentKind = z.infer<typeof agentKindSchema>;
 
 /** Optional features an agent integration can expose to Overfactor clients. */
-export const agentCapabilitySchema = z.enum(["continue-conversation"]);
+export const agentCapabilitySchema = z.enum(["continue-conversation", "generate-review"]);
 export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
 
 /** Public manifest served by the daemon for each installed agent integration. */
@@ -183,14 +183,146 @@ export type ConversationMessageAck = z.infer<typeof conversationMessageAckSchema
 export const conversationMessageAckResponseSchema = z.object({ ok: z.literal(true) });
 export type ConversationMessageAckResponse = z.infer<typeof conversationMessageAckResponseSchema>;
 
+/** One intent group in a curated review: what the change does, not where it lives. */
+export const reviewGroupSchema = z.object({
+  name: z.string().min(1).max(120),
+  /** 1-3 sentences: what the group does and why. */
+  summary: z.string().min(1).max(2000),
+  /** Repo-relative paths of the changed files this group covers. */
+  files: z.array(z.string().min(1)).min(1),
+});
+export type ReviewGroup = z.infer<typeof reviewGroupSchema>;
+
+export const reviewStatusSchema = z.enum(["generating", "ready", "failed"]);
+export type ReviewStatus = z.infer<typeof reviewStatusSchema>;
+
+/** Addresses one review: the branch of a repo (the unit of work under review). */
+export const reviewSubjectSchema = z.object({
+  repoPath: z.string().min(1),
+  branch: z.string().min(1),
+});
+export type ReviewSubject = z.infer<typeof reviewSubjectSchema>;
+
+/** Body of `POST /reviews/generate`: the subject plus an optional model override. */
+export const generateReviewRequestSchema = reviewSubjectSchema.extend({
+  /** Engine model alias/id; omitted means the engine's explicit default. */
+  model: z.string().trim().min(1).max(100).optional(),
+});
+export type GenerateReviewRequest = z.infer<typeof generateReviewRequestSchema>;
+
+/**
+ * A guided review as served by the daemon. Reviews are branch-level: every
+ * session on (repoPath, branch) shares one review of the branch's total
+ * change — committed work against the default branch plus the live
+ * worktree's uncommitted changes.
+ */
+export const reviewSchema = z.object({
+  id: z.int().positive(),
+  repoPath: z.string().min(1),
+  branch: z.string().min(1),
+  status: reviewStatusSchema,
+  engine: agentKindSchema,
+  model: z.string().nullable(),
+  /** Content hash of the reviewed patch; regeneration staleness keys off it. */
+  diffHash: z.string().nullable(),
+  groups: z.array(reviewGroupSchema),
+  /** Names of groups the user marked reviewed; survives regeneration for unchanged groups. */
+  reviewedGroups: z.array(z.string()),
+  error: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type Review = z.infer<typeof reviewSchema>;
+
+/** Response of `GET /reviews`: the review plus its diff subject for rendering. */
+export const reviewResponseSchema = z.object({
+  review: reviewSchema.nullable(),
+  patch: z.string().nullable(),
+});
+export type ReviewResponse = z.infer<typeof reviewResponseSchema>;
+
+/**
+ * Input handed to an integration's review engine. Carries intent evidence
+ * Overfactor uniquely has (session titles) and the previous grouping so
+ * regeneration can keep unchanged groups stable.
+ */
+export const reviewEngineRequestSchema = z.object({
+  patch: z.string().min(1),
+  intent: z.object({
+    crTitle: z.string().nullable(),
+    branch: z.string().nullable(),
+    sessionTitles: z.array(z.string()),
+  }),
+  previousGroups: z.array(reviewGroupSchema).nullable(),
+});
+export type ReviewEngineRequest = z.infer<typeof reviewEngineRequestSchema>;
+
+/** Output contract every review engine must satisfy. */
+export const reviewEngineResultSchema = z.object({
+  groups: z.array(reviewGroupSchema).min(1),
+});
+export type ReviewEngineResult = z.infer<typeof reviewEngineResultSchema>;
+
+/**
+ * Repairs an engine's grouping against the actual changed-file list: unknown
+ * files are dropped, duplicate assignments keep their first group, and files
+ * the engine missed are swept into a trailing catch-all group rather than
+ * failing the review.
+ */
+export function normalizeReviewGroups(
+  groups: readonly ReviewGroup[],
+  changedFiles: readonly string[],
+): ReviewGroup[] {
+  const known = new Set(changedFiles);
+  const assigned = new Set<string>();
+  const normalized: ReviewGroup[] = [];
+  for (const group of groups) {
+    const files = group.files.filter((file) => known.has(file) && !assigned.has(file));
+    for (const file of files) assigned.add(file);
+    if (files.length > 0) normalized.push({ ...group, files });
+  }
+  const missed = changedFiles.filter((file) => !assigned.has(file));
+  if (missed.length > 0) {
+    normalized.push({
+      name: "Everything else",
+      summary: "Changed files the review did not assign to an intent group.",
+      files: missed,
+    });
+  }
+  return normalized;
+}
+
 /** Messages the daemon pushes to app subscribers over WebSocket. */
 export const wsServerMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("invalidate"),
-    collection: z.enum(["sessions", "repos", "crs", "transcripts"]),
+    collection: z.enum(["sessions", "repos", "crs", "transcripts", "reviews"]),
   }),
 ]);
 export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
+
+/** Response of `GET /repos/branches`: refs a review can be generated for. */
+export const repoBranchesResponseSchema = z.object({
+  /** Local and remote branch names (remote prefix stripped), deduped, sorted. */
+  branches: z.array(z.string()),
+  defaultBranch: z.string().nullable(),
+});
+export type RepoBranchesResponse = z.infer<typeof repoBranchesResponseSchema>;
+
+/** Body of `POST /repos/branch`: track a branch without a detected session. */
+export const trackBranchRequestSchema = z.object({
+  path: z.string().min(1),
+  branch: z.string().min(1),
+});
+export type TrackBranchRequest = z.infer<typeof trackBranchRequestSchema>;
+
+/** Body of `POST /repos/pr`: fetch a GitHub PR, create a worktree, track it. */
+export const trackPrRequestSchema = z.object({
+  path: z.string().min(1),
+  /** A github.com pull request URL, e.g. https://github.com/o/r/pull/7 */
+  url: z.string().min(1),
+});
+export type TrackPrRequest = z.infer<typeof trackPrRequestSchema>;
 
 /** Body of `POST /repos` and `DELETE /repos`. */
 export const repoPathRequestSchema = z.object({

@@ -6,6 +6,7 @@ import {
   conversationMessageSchema,
   daemonInfoSchema,
   hookEventSchema,
+  normalizeReviewGroups,
   sessionSchema,
   transcriptEntrySchema,
 } from "../src/index.ts";
@@ -144,5 +145,39 @@ describe("daemonInfoSchema", () => {
       version: "0.0.0",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("normalizeReviewGroups", () => {
+  const changed = ["src/a.ts", "src/b.ts", "tests/a.test.ts"];
+
+  it("passes a complete, disjoint grouping through untouched", () => {
+    const groups = [
+      { name: "Core", summary: "Does the thing.", files: ["src/a.ts", "src/b.ts"] },
+      { name: "Tests", summary: "Covers it.", files: ["tests/a.test.ts"] },
+    ];
+    expect(normalizeReviewGroups(groups, changed)).toEqual(groups);
+  });
+
+  it("drops unknown files, dedupes to first assignment, sweeps the rest", () => {
+    const groups = [
+      { name: "Core", summary: "Does the thing.", files: ["src/a.ts", "ghost.ts"] },
+      { name: "Echo", summary: "Repeats a file.", files: ["src/a.ts"] },
+    ];
+    expect(normalizeReviewGroups(groups, changed)).toEqual([
+      { name: "Core", summary: "Does the thing.", files: ["src/a.ts"] },
+      {
+        name: "Everything else",
+        summary: "Changed files the review did not assign to an intent group.",
+        files: ["src/b.ts", "tests/a.test.ts"],
+      },
+    ]);
+  });
+
+  it("drops groups left empty after filtering", () => {
+    const groups = [{ name: "Ghosts", summary: "Only unknowns.", files: ["ghost.ts"] }];
+    expect(normalizeReviewGroups(groups, changed).map((group) => group.name)).toEqual([
+      "Everything else",
+    ]);
   });
 });

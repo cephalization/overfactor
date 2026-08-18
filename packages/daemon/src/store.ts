@@ -1,8 +1,32 @@
-import type { ChangeRequest, DiffStats, HookEvent, LifecycleState, Session } from "@overfactor/sdk";
-import { changeRequestSchema, sessionSchema } from "@overfactor/sdk";
-import { and, eq } from "drizzle-orm";
+import type {
+  AgentKind,
+  ChangeRequest,
+  DiffStats,
+  HookEvent,
+  LifecycleState,
+  Review,
+  ReviewGroup,
+  ReviewSubject,
+  Session,
+} from "@overfactor/sdk";
+import {
+  changeRequestSchema,
+  reviewGroupSchema,
+  reviewSchema,
+  sessionSchema,
+} from "@overfactor/sdk";
+import { and, eq, type SQL } from "drizzle-orm";
 import Emittery from "emittery";
-import { type ChangeRequestRow, type Db, type SessionRow, changeRequests, sessions } from "./db.ts";
+import { z } from "zod";
+import {
+  type ChangeRequestRow,
+  type Db,
+  type ReviewRow,
+  type SessionRow,
+  changeRequests,
+  reviews,
+  sessions,
+} from "./db.ts";
 
 const TITLE_MAX_LENGTH = 80;
 
@@ -48,6 +72,31 @@ function rowToSession(row: SessionRow, effectiveCrId: number | null): Session {
   });
 }
 
+function reviewSubjectClause(subject: ReviewSubject): SQL {
+  // SAFETY: `and` of two eq clauses is never undefined.
+  return and(eq(reviews.repoPath, subject.repoPath), eq(reviews.branch, subject.branch)) as SQL;
+}
+
+const storedGroupsSchema = z.array(reviewGroupSchema);
+const storedReviewedSchema = z.array(z.string());
+
+function rowToReview(row: ReviewRow): Review {
+  return reviewSchema.parse({
+    id: row.id,
+    repoPath: row.repoPath,
+    branch: row.branch,
+    status: row.status,
+    engine: row.engine,
+    model: row.model,
+    diffHash: row.diffHash,
+    groups: storedGroupsSchema.parse(JSON.parse(row.groups)),
+    reviewedGroups: storedReviewedSchema.parse(JSON.parse(row.reviewedGroups)),
+    error: row.error,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
+
 function rowToChangeRequest(row: ChangeRequestRow): ChangeRequest {
   return changeRequestSchema.parse({
     id: row.id,
@@ -68,7 +117,11 @@ function rowToChangeRequest(row: ChangeRequestRow): ChangeRequest {
  * off that signal. `crsChanged` fires when the Change Request set mutates.
  */
 export class SessionStore {
-  readonly events = new Emittery<{ changed: undefined; crsChanged: undefined }>();
+  readonly events = new Emittery<{
+    changed: undefined;
+    crsChanged: undefined;
+    reviewsChanged: undefined;
+  }>();
 
   constructor(
     private readonly db: Db,
@@ -313,6 +366,154 @@ export class SessionStore {
       .run();
     void this.events.emit("changed");
     return true;
+  }
+
+  getReview(subject: ReviewSubject): Review | null {
+    const row = this.db.select().from(reviews).where(reviewSubjectClause(subject)).get();
+    return row === undefined ? null : rowToReview(row);
+  }
+
+  getChangeRequest(crId: number): ChangeRequest | null {
+    const row = this.db.select().from(changeRequests).where(eq(changeRequests.id, crId)).get();
+    return row === undefined ? null : rowToChangeRequest(row);
+  }
+
+  /**
+   * Starts (or restarts) a generation for a subject: upserts the review row
+   * into `generating`, preserving the previous groups and reviewed marks so
+   * the UI keeps showing the old review while the new one is produced.
+   */
+  beginReview(subject: ReviewSubject, engine: AgentKind, model: string | null): Review {
+    const timestamp = this.now().toISOString();
+    const existing = this.db.select().from(reviews).where(reviewSubjectClause(subject)).get();
+    if (existing !== undefined) {
+      this.db
+        .update(reviews)
+        .set({ status: "generating", engine, model, error: null, updatedAt: timestamp })
+        .where(eq(reviews.id, existing.id))
+        .run();
+    } else {
+      this.db
+        .insert(reviews)
+        .values({
+          repoPath: subject.repoPath,
+          branch: subject.branch,
+          status: "generating",
+          engine,
+          model,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })
+        .run();
+    }
+    void this.events.emit("reviewsChanged");
+    // SAFETY: the row was just written above, so the re-read cannot miss.
+    return this.getReview(subject) as Review;
+  }
+
+  /** Lands generated groups; reviewed marks survive only for groups that still exist. */
+  completeReview(subject: ReviewSubject, groups: ReviewGroup[], diffHash: string): void {
+    const existing = this.db.select().from(reviews).where(reviewSubjectClause(subject)).get();
+    if (existing === undefined) return;
+    const groupNames = new Set(groups.map((group) => group.name));
+    const reviewedGroups = storedReviewedSchema
+      .parse(JSON.parse(existing.reviewedGroups))
+      .filter((name) => groupNames.has(name));
+    this.db
+      .update(reviews)
+      .set({
+        status: "ready",
+        groups: JSON.stringify(groups),
+        reviewedGroups: JSON.stringify(reviewedGroups),
+        diffHash,
+        error: null,
+        updatedAt: this.now().toISOString(),
+      })
+      .where(eq(reviews.id, existing.id))
+      .run();
+    void this.events.emit("reviewsChanged");
+  }
+
+  failReview(subject: ReviewSubject, error: string): void {
+    const existing = this.db.select().from(reviews).where(reviewSubjectClause(subject)).get();
+    if (existing === undefined) return;
+    this.db
+      .update(reviews)
+      .set({ status: "failed", error, updatedAt: this.now().toISOString() })
+      .where(eq(reviews.id, existing.id))
+      .run();
+    void this.events.emit("reviewsChanged");
+  }
+
+  /** Toggles a group's reviewed mark. Returns false for unknown review/group. */
+  setGroupReviewed(reviewId: number, groupName: string, reviewed: boolean): boolean {
+    const row = this.db.select().from(reviews).where(eq(reviews.id, reviewId)).get();
+    if (row === undefined) return false;
+    const groups = storedGroupsSchema.parse(JSON.parse(row.groups));
+    if (!groups.some((group) => group.name === groupName)) return false;
+    const current = new Set(storedReviewedSchema.parse(JSON.parse(row.reviewedGroups)));
+    if (reviewed) current.add(groupName);
+    else current.delete(groupName);
+    this.db
+      .update(reviews)
+      .set({ reviewedGroups: JSON.stringify([...current]), updatedAt: this.now().toISOString() })
+      .where(eq(reviews.id, reviewId))
+      .run();
+    void this.events.emit("reviewsChanged");
+    return true;
+  }
+
+  /** Sessions working on a repo branch; intent evidence and worktree source for reviews. */
+  sessionsForBranch(subject: ReviewSubject): Session[] {
+    return this.list().filter(
+      (session) => session.repoPath === subject.repoPath && session.branch === subject.branch,
+    );
+  }
+
+  /**
+   * Stamps GitHub PR identity/state onto a CR. Returns true when this newly
+   * attached a PR (the auto-generate trigger); identical values are a no-op
+   * with no event, so the poller doesn't cause WS churn.
+   */
+  setChangeRequestPr(
+    crId: number,
+    pr: { number: number; state: string; url: string; title?: string },
+  ): boolean {
+    const row = this.db.select().from(changeRequests).where(eq(changeRequests.id, crId)).get();
+    if (row === undefined) return false;
+    const titled = pr.title ?? row.title;
+    if (
+      row.prNumber === pr.number &&
+      row.prState === pr.state &&
+      row.prUrl === pr.url &&
+      row.title === titled
+    ) {
+      return false;
+    }
+    const newlyAttached = row.prNumber === null;
+    this.db
+      .update(changeRequests)
+      .set({
+        prNumber: pr.number,
+        prState: pr.state,
+        prUrl: pr.url,
+        title: titled,
+        updatedAt: this.now().toISOString(),
+      })
+      .where(eq(changeRequests.id, crId))
+      .run();
+    void this.events.emit("crsChanged");
+    return newlyAttached;
+  }
+
+  /** The CR for a repo branch when one exists; never creates one. */
+  findChangeRequest(repoPath: string, branch: string): ChangeRequest | null {
+    const row = this.db
+      .select()
+      .from(changeRequests)
+      .where(and(eq(changeRequests.repoPath, repoPath), eq(changeRequests.branch, branch)))
+      .get();
+    return row === undefined ? null : rowToChangeRequest(row);
   }
 
   /** Distinct cwds of sessions that are still live (not ended), optionally scoped to one repo. */

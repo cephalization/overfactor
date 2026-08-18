@@ -1,11 +1,15 @@
 import { createDaemonClient } from "@overfactor/daemon/client";
 import {
   agentIntegrationManifestSchema,
+  type ChangeRequest,
   changeRequestSchema,
   continueConversationResponseSchema,
   type DaemonInfo,
   daemonInfoSchema,
   overfactorConfigSchema,
+  repoBranchesResponseSchema,
+  reviewResponseSchema,
+  type ReviewSubject,
   type Session,
   sessionDiffSchema,
   sessionSchema,
@@ -92,6 +96,11 @@ export function useSessionInvalidation(port: number): void {
       const message = wsServerMessageSchema.safeParse(raw);
       if (message.success && message.data.type === "invalidate") {
         void queryClient.invalidateQueries({ queryKey: [message.data.collection] });
+        // A branch review's patch is computed from worktree state, so any
+        // session/diff-stats change can stale it too.
+        if (message.data.collection === "sessions") {
+          void queryClient.invalidateQueries({ queryKey: ["reviews"] });
+        }
       }
     });
     return () => socket.close();
@@ -128,6 +137,75 @@ export function useAddRepo(baseUrl: string) {
       return path;
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["repos"] }),
+  });
+}
+
+/** Branch names a review can target (local + remote); for the track dialog. */
+export function useRepoBranches(baseUrl: string, repoPath: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["repos", baseUrl, "branches", repoPath],
+    enabled,
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).repos.branches.$get({
+        query: { path: repoPath },
+      });
+      if (!response.ok) throw new Error(`branch list failed (${response.status})`);
+      return repoBranchesResponseSchema.parse(await response.json());
+    },
+  });
+}
+
+const trackedCrResponseSchema = z.object({ cr: changeRequestSchema });
+
+/** Track a branch with no detected session; yields a CR (and so a review). */
+export function useTrackBranch(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({
+      repoPath,
+      branch,
+    }: {
+      repoPath: string;
+      branch: string;
+    }): Promise<ChangeRequest> => {
+      const response = await createDaemonClient(baseUrl).repos.branch.$post({
+        json: { path: repoPath, branch },
+      });
+      if (!response.ok) {
+        const parsed = errorResponseSchema.safeParse(await response.json().catch(() => null));
+        throw new Error(
+          (parsed.success ? parsed.data?.error : undefined) ??
+            `branch tracking failed (${response.status})`,
+        );
+      }
+      return trackedCrResponseSchema.parse(await response.json()).cr;
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["crs"] }),
+  });
+}
+
+/** Fetch a GitHub PR, create a worktree for it, and track it as a CR. */
+export function useTrackPr(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({
+      repoPath,
+      url,
+    }: {
+      repoPath: string;
+      url: string;
+    }): Promise<ChangeRequest> => {
+      const response = await createDaemonClient(baseUrl).repos.pr.$post({
+        json: { path: repoPath, url },
+      });
+      if (!response.ok) {
+        const parsed = errorResponseSchema.safeParse(await response.json().catch(() => null));
+        throw new Error(
+          (parsed.success ? parsed.data?.error : undefined) ??
+            `PR tracking failed (${response.status})`,
+        );
+      }
+      return trackedCrResponseSchema.parse(await response.json()).cr;
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["crs"] }),
   });
 }
 
@@ -230,6 +308,54 @@ export function useContinueConversation(baseUrl: string) {
       }
       continueConversationResponseSchema.parse(await response.json());
     },
+  });
+}
+
+/**
+ * The branch-level guided review (plus a fresh subject patch) for one
+ * (repo, branch). Lives under the "reviews" queryKey prefix so the daemon's
+ * WS "reviews" invalidations — emitted when generation starts, completes,
+ * or fails — refetch it.
+ */
+export function useBranchReview(baseUrl: string, subject: ReviewSubject) {
+  return useQuery({
+    queryKey: ["reviews", baseUrl, subject.repoPath, subject.branch],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).reviews.$get({ query: subject });
+      if (!response.ok) throw new Error(`review request failed (${response.status})`);
+      return reviewResponseSchema.parse(await response.json());
+    },
+  });
+}
+
+/** Trigger branch-review generation; rejections carry the daemon's outcome. */
+export function useGenerateReview(baseUrl: string) {
+  return useMutation({
+    mutationFn: async ({ subject, model }: { subject: ReviewSubject; model: string | null }) => {
+      const response = await createDaemonClient(baseUrl).reviews.generate.$post({
+        json: model === null ? subject : { ...subject, model },
+      });
+      if (!response.ok) {
+        const parsed = errorResponseSchema.safeParse(await response.json().catch(() => null));
+        const error = parsed.success ? parsed.data?.error : undefined;
+        throw new Error(error ?? `review generation failed (${response.status})`);
+      }
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["reviews"] }),
+  });
+}
+
+/** Persist a per-group reviewed mark; survives restarts and regeneration. */
+export function useMarkGroupReviewed(baseUrl: string) {
+  return useMutation({
+    mutationFn: async (input: { reviewId: number; group: string; reviewed: boolean }) => {
+      const response = await createDaemonClient(baseUrl).reviews[":id"].groups.$post({
+        param: { id: String(input.reviewId) },
+        json: { group: input.group, reviewed: input.reviewed },
+      });
+      if (!response.ok) throw new Error(`reviewed mark failed (${response.status})`);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["reviews"] }),
   });
 }
 

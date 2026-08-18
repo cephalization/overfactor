@@ -15,6 +15,7 @@
     "./hook": "./dist/hook.mjs",
     "./install": "./dist/install.mjs",
     "./package.json": "./package.json",
+    "./review": "./dist/review.mjs",
     "./transcript": "./dist/transcript.mjs"
   },
   "scripts": {

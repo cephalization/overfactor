@@ -52,6 +52,8 @@ catalog:
   react-resizable-panels: ^4.12.2
   oxlint: 1.78.0
   "@oxlint/plugins": 1.78.0
+  octokit: ^5.0.5
+  cmdk: ^1.1.1
 
 # pnpm 11 fails installs on unreviewed dependency build scripts; approve the
 # native/postinstall builds we rely on and keep the rest skipped.

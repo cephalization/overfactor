@@ -1,5 +1,15 @@
-import type { ChangeRequest, LifecycleState, Session } from "@overfactor/sdk";
-import { Archive, ArchiveRestore, FolderPlus, GitBranch, X } from "lucide-react";
+import type { ChangeRequest, LifecycleState, ReviewSubject, Session } from "@overfactor/sdk";
+import type { Selection } from "@/app.tsx";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
+  FolderPlus,
+  GitBranch,
+  GitBranchPlus,
+  GitPullRequestArrow,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.tsx";
@@ -16,6 +26,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar.tsx";
+import { TrackBranchDialog } from "@/components/track-branch-dialog.tsx";
 import { filterSidebarSessions, groupSidebarItems } from "@/lib/sidebar-groups.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -58,23 +69,104 @@ export interface RepoSectionProps {
   addRepoError: string | null;
 }
 
+/**
+ * A selectable branch/CR header row: clicking opens the branch's guided
+ * review in the main pane, making review a first-class navigation peer of
+ * sessions.
+ */
+function ReviewRowButton({
+  active,
+  title,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={cn(
+        "group/review flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        active && "bg-sidebar-accent text-sidebar-accent-foreground",
+      )}
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
+      {/* Sized like SidebarGroupAction (size-7) so the chevron's glyph sits
+          in the same column as the repo row's ✕ icon button above it. */}
+      <span className="flex size-7 shrink-0 items-center justify-center">
+        <ChevronRight className="size-3.5 text-sidebar-foreground/40 transition-colors group-hover/review:text-sidebar-accent-foreground" />
+      </span>
+    </button>
+  );
+}
+
+/** GitHub PR state → badge tint. */
+const PR_BADGE_STYLES = {
+  open: "border-emerald-600/50 text-emerald-600 dark:border-emerald-400/50 dark:text-emerald-400",
+  merged: "border-purple-600/50 text-purple-600 dark:border-purple-400/50 dark:text-purple-400",
+  closed: "border-red-600/50 text-red-600 dark:border-red-400/50 dark:text-red-400",
+} satisfies Record<string, string>;
+
+function prBadgeStyle(state: string | null): string {
+  if (state === null || !(state in PR_BADGE_STYLES)) return "text-sidebar-foreground/60";
+  // SAFETY: the `in` check above guarantees `state` is a PR_BADGE_STYLES key.
+  return PR_BADGE_STYLES[state as keyof typeof PR_BADGE_STYLES];
+}
+
+function PrBadge({ cr }: { cr: ChangeRequest }) {
+  if (cr.prNumber === null) return null;
+  const url = cr.prUrl;
+  return (
+    <span
+      role="link"
+      title={`${cr.prState ?? "PR"} — open on GitHub`}
+      className={cn(
+        "ml-auto shrink-0 rounded-full border px-1.5 font-mono text-[10px]",
+        prBadgeStyle(cr.prState),
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        // Routed to shell.openExternal by the main process.
+        if (url !== null) window.open(url);
+      }}
+    >
+      #{cr.prNumber}
+    </span>
+  );
+}
+
 export function SessionSidebar({
+  baseUrl,
   sessions,
   crs,
-  selectedId,
+  selection,
   onSelect,
+  onSelectReview,
   repos,
   onAddRepo,
   onRemoveRepo,
   addRepoError,
   onSetArchived,
 }: {
+  baseUrl: string;
   sessions: Session[];
   crs: ChangeRequest[];
-  selectedId: string | null;
+  selection: Selection | null;
   onSelect: (id: string) => void;
+  onSelectReview: (subject: ReviewSubject) => void;
   onSetArchived: (id: string, archived: boolean) => void;
 } & RepoSectionProps) {
+  const [trackRepo, setTrackRepo] = useState<string | null>(null);
+  const selectedId = selection?.kind === "session" ? selection.id : null;
+  const reviewActive = (subject: ReviewSubject): boolean =>
+    selection?.kind === "review" &&
+    selection.subject.repoPath === subject.repoPath &&
+    selection.subject.branch === subject.branch;
   const [visibleStates, setVisibleStates] = useState<Set<LifecycleState>>(
     () => new Set(SESSION_STATES),
   );
@@ -171,25 +263,38 @@ export function SessionSidebar({
                 <span className="truncate">{basename(repo.path)}</span>
               </SidebarGroupLabel>
               {repo.tracked && (
-                <SidebarGroupAction
-                  className="top-2.5 right-4 size-7 w-7"
-                  title={`Stop tracking ${basename(repo.path)}`}
-                  onClick={() => onRemoveRepo(repo.path)}
-                >
-                  <X />
-                  <span className="sr-only">Stop tracking {basename(repo.path)}</span>
-                </SidebarGroupAction>
+                <>
+                  <SidebarGroupAction
+                    className="top-2.5 right-11 size-7 w-7"
+                    title="Track a branch or PR"
+                    onClick={() => setTrackRepo(repo.path)}
+                  >
+                    <GitBranchPlus />
+                    <span className="sr-only">Track a branch or PR in {basename(repo.path)}</span>
+                  </SidebarGroupAction>
+                  <SidebarGroupAction
+                    className="top-2.5 right-4 size-7 w-7"
+                    title={`Stop tracking ${basename(repo.path)}`}
+                    onClick={() => onRemoveRepo(repo.path)}
+                  >
+                    <X />
+                    <span className="sr-only">Stop tracking {basename(repo.path)}</span>
+                  </SidebarGroupAction>
+                </>
               )}
               <SidebarGroupContent className="space-y-3">
                 {repo.crGroups.map(({ cr, sessions: crSessions }) => (
                   <div key={`cr:${cr.id}`} className="space-y-1">
-                    <div
-                      className="flex h-7 items-center gap-1.5 px-2 text-xs text-sidebar-foreground/70"
-                      title={`${cr.branch} · ${cr.repoPath}`}
+                    <ReviewRowButton
+                      active={reviewActive({ repoPath: cr.repoPath, branch: cr.branch })}
+                      title={`Review ${cr.branch} · ${cr.repoPath}`}
+                      onClick={() => onSelectReview({ repoPath: cr.repoPath, branch: cr.branch })}
                     >
+                      <GitPullRequestArrow className="size-3.5 shrink-0" />
                       <span className="shrink-0 font-semibold">CR-{cr.id}</span>
                       <span className="truncate">· {cr.title}</span>
-                    </div>
+                      <PrBadge cr={cr} />
+                    </ReviewRowButton>
                     {crSessions.length === 0 ? (
                       <p className="px-4 py-1 text-xs text-muted-foreground">No sessions</p>
                     ) : (
@@ -204,10 +309,23 @@ export function SessionSidebar({
                 ))}
                 {repo.branchGroups.map((branchGroup) => (
                   <div key={`branch:${branchGroup.branch ?? ""}`} className="space-y-1">
-                    <div className="flex h-7 items-center gap-1.5 px-2 text-xs text-sidebar-foreground/70">
-                      <GitBranch className="size-3.5 shrink-0" />
-                      <span className="truncate font-medium">{branchGroup.label}</span>
-                    </div>
+                    {branchGroup.branch === null ? (
+                      <div className="flex h-7 items-center gap-1.5 px-2 text-xs text-sidebar-foreground/70">
+                        <GitBranch className="size-3.5 shrink-0" />
+                        <span className="truncate font-medium">{branchGroup.label}</span>
+                      </div>
+                    ) : (
+                      <ReviewRowButton
+                        active={reviewActive({ repoPath: repo.path, branch: branchGroup.branch })}
+                        title={`Review ${branchGroup.branch} · ${repo.path}`}
+                        onClick={() =>
+                          onSelectReview({ repoPath: repo.path, branch: branchGroup.branch ?? "" })
+                        }
+                      >
+                        <GitBranch className="size-3.5 shrink-0" />
+                        <span className="truncate font-medium">{branchGroup.label}</span>
+                      </ReviewRowButton>
+                    )}
                     <SessionMenu
                       sessions={branchGroup.sessions}
                       selectedId={selectedId}
@@ -228,6 +346,14 @@ export function SessionSidebar({
           ))
         )}
       </SidebarContent>
+      <TrackBranchDialog
+        baseUrl={baseUrl}
+        repoPath={trackRepo}
+        onOpenChange={(open) => {
+          if (!open) setTrackRepo(null);
+        }}
+        onTracked={onSelectReview}
+      />
     </Sidebar>
   );
 }
@@ -255,15 +381,14 @@ function SessionMenu({
               onClick={() => onSelect(session.id)}
             >
               <span className="flex w-full items-center gap-2">
-                <span
-                  className={cn("size-2 shrink-0 rounded-full", state.dot)}
-                  aria-label={state.label}
-                />
+                <span className="flex size-3.5 shrink-0 items-center justify-center">
+                  <span className={cn("size-2 rounded-full", state.dot)} aria-label={state.label} />
+                </span>
                 <span className="truncate text-sm font-medium">
                   {session.title ?? "Untitled session"}
                 </span>
               </span>
-              <span className="flex w-full items-center justify-between gap-2 pl-4">
+              <span className="flex w-full items-center justify-between gap-2 pl-[1.375rem]">
                 <span className="flex items-center gap-1">
                   <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
                     {AGENT_LABELS[session.agent]}
@@ -277,7 +402,7 @@ function SessionMenu({
                 <DiffStats session={session} />
               </span>
               <span
-                className="w-full truncate pl-4 font-mono text-[10px] text-sidebar-foreground/55"
+                className="w-full truncate pl-[1.375rem] font-mono text-[10px] text-sidebar-foreground/55"
                 title={session.model ?? "Model not reported"}
               >
                 {session.model ?? "Model not reported"}

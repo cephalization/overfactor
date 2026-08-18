@@ -1,6 +1,7 @@
-import type { DaemonInfo } from "@overfactor/sdk";
+import type { DaemonInfo, ReviewSubject } from "@overfactor/sdk";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useMemo, useState } from "react";
+import { BranchReview } from "@/components/branch-review.tsx";
 import { SessionDetail } from "@/components/session-detail.tsx";
 import { SessionSidebar } from "@/components/session-sidebar.tsx";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar.tsx";
@@ -14,6 +15,11 @@ import {
   useSessionInvalidation,
   useSetSessionArchived,
 } from "@/lib/daemon.ts";
+
+/** What the main pane shows: one session, or one branch's guided review. */
+export type Selection =
+  | { kind: "session"; id: string }
+  | { kind: "review"; subject: ReviewSubject };
 
 export function App() {
   const info = useDaemonInfo();
@@ -47,16 +53,31 @@ function Connected({ info }: { info: DaemonInfo }) {
   const addRepo = useAddRepo(baseUrl);
   const removeRepo = useRemoveRepo(baseUrl);
   const setSessionArchived = useSetSessionArchived(baseUrl);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = (sessions ?? []).find((session) => session.id === selectedId) ?? null;
+  const [selection, setSelection] = useState<Selection | null>(null);
+
+  const selectedSession =
+    selection?.kind === "session"
+      ? ((sessions ?? []).find((session) => session.id === selection.id) ?? null)
+      : null;
+  const reviewSubject = selection?.kind === "review" ? selection.subject : null;
+  const reviewCrTitle =
+    reviewSubject === null
+      ? null
+      : ((crs.data ?? []).find(
+          (cr) => cr.repoPath === reviewSubject.repoPath && cr.branch === reviewSubject.branch,
+        )?.title ?? null);
+
+  const openReview = (subject: ReviewSubject) => setSelection({ kind: "review", subject });
 
   return (
     <SidebarProvider>
       <SessionSidebar
+        baseUrl={baseUrl}
         sessions={sessions ?? []}
         crs={crs.data ?? []}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
+        selection={selection}
+        onSelect={(id) => setSelection({ kind: "session", id })}
+        onSelectReview={openReview}
         repos={repos.data ?? []}
         onAddRepo={() => addRepo.mutate()}
         onRemoveRepo={(path) => removeRepo.mutate(path)}
@@ -74,11 +95,15 @@ function Connected({ info }: { info: DaemonInfo }) {
           </span>
         </header>
         <main className="min-h-0 flex-1">
-          {selected !== null ? (
-            <SessionDetail baseUrl={baseUrl} session={selected} />
+          {selectedSession !== null ? (
+            <SessionDetail baseUrl={baseUrl} session={selectedSession} onOpenReview={openReview} />
+          ) : reviewSubject !== null ? (
+            <BranchReview baseUrl={baseUrl} subject={reviewSubject} crTitle={reviewCrTitle} />
           ) : (
             <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-muted-foreground">Select a session to see its details.</p>
+              <p className="text-sm text-muted-foreground">
+                Select a session or a branch to see its details.
+              </p>
             </div>
           )}
         </main>

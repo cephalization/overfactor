@@ -1,7 +1,6 @@
-import type { Session } from "@overfactor/sdk";
-import { PanelRightOpen, Pencil } from "lucide-react";
+import type { ReviewSubject, Session } from "@overfactor/sdk";
+import { GitBranch, PanelRightOpen, Pencil } from "lucide-react";
 import { useState } from "react";
-import { CuratedReview } from "@/components/curated-review.tsx";
 import { SessionDiff } from "@/components/session-diff.tsx";
 import { AGENT_LABELS, DiffStats, STATE_STYLES } from "@/components/session-sidebar.tsx";
 import { TranscriptPanel } from "@/components/transcript-panel.tsx";
@@ -16,8 +15,6 @@ import { Input } from "@/components/ui/input.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
 import { useRenameSession } from "@/lib/daemon.ts";
 import { cn } from "@/lib/utils.ts";
-
-type ReviewMode = "all" | "curated";
 
 /**
  * Inline-editable session title: click the pencil (or double-click the
@@ -74,13 +71,20 @@ function EditableTitle({ baseUrl, session }: { baseUrl: string; session: Session
 }
 
 /**
- * The review surface for one session: the diff experiences on the left
- * ("All files" or "Curated review"), the live transcript in a resizable
- * panel on the right.
+ * One session's detail: its own worktree diff on the left, the live
+ * transcript in a resizable panel on the right. The guided review lives at
+ * the branch level — "View review" jumps to it.
  */
-export function SessionDetail({ baseUrl, session }: { baseUrl: string; session: Session }) {
+export function SessionDetail({
+  baseUrl,
+  session,
+  onOpenReview,
+}: {
+  baseUrl: string;
+  session: Session;
+  onOpenReview: (subject: ReviewSubject) => void;
+}) {
   const state = STATE_STYLES[session.state];
-  const [mode, setMode] = useState<ReviewMode>("all");
   const [transcriptOpen, setTranscriptOpen] = useState(true);
 
   return (
@@ -101,20 +105,20 @@ export function SessionDetail({ baseUrl, session }: { baseUrl: string; session: 
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <Button
-                variant={mode === "all" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setMode("all")}
-              >
-                All files
-              </Button>
-              <Button
-                variant={mode === "curated" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setMode("curated")}
-              >
-                Curated review
-              </Button>
+              {session.branch !== null && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title={`Open the guided review of ${session.branch}`}
+                  onClick={() =>
+                    session.branch !== null &&
+                    onOpenReview({ repoPath: session.repoPath, branch: session.branch })
+                  }
+                >
+                  <GitBranch />
+                  View review
+                </Button>
+              )}
               {!transcriptOpen && (
                 <Button
                   variant="ghost"
@@ -129,11 +133,7 @@ export function SessionDetail({ baseUrl, session }: { baseUrl: string; session: 
               )}
             </div>
             <Separator />
-            {mode === "all" ? (
-              <SessionDiff baseUrl={baseUrl} session={session} />
-            ) : (
-              <CuratedReview baseUrl={baseUrl} session={session} />
-            )}
+            <SessionDiff baseUrl={baseUrl} session={session} />
           </div>
         </div>
       </ResizablePanel>

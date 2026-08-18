@@ -104,3 +104,16 @@ export async function mainWorktreeRoot(cwd: string): Promise<string | null> {
   if (!commonDir.endsWith("/.git")) return null;
   return commonDir.slice(0, -"/.git".length);
 }
+
+/**
+ * Committed changes of a CR branch relative to the repo's default branch
+ * (three-dot: merge-base to branch tip). The CR review subject combines this
+ * with the uncommitted worktree patch of a live session on the branch.
+ */
+export async function computeBranchPatch(
+  repoPath: string,
+  baseBranch: string,
+  branch: string,
+): Promise<string | null> {
+  return git(repoPath, ["diff", "--no-ext-diff", `${baseBranch}...${branch}`]);
+}

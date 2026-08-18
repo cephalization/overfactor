@@ -1,9 +1,12 @@
 import type { AgentIntegrationManifest, HookEvent } from "@overfactor/sdk";
 
-/** Claude Code hooks are observational and cannot inject input into the live session. */
+/**
+ * Claude Code hooks are observational (no input injection into live
+ * sessions), but the CLI's print mode can generate curated reviews.
+ */
 export const claudeCodeIntegrationManifest = {
   agent: "claude-code",
-  capabilities: [],
+  capabilities: ["generate-review"],
 } satisfies AgentIntegrationManifest;
 import { z } from "zod";
 

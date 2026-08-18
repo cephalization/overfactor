@@ -25,6 +25,15 @@ import { sep } from "node:path";
 import { ConversationQueue } from "./conversation.ts";
 import { computeDiffPatch } from "./diff.ts";
 import { addRepo, removeRepo } from "./repos.ts";
+import type { ChangeRequest, ReviewResponse, ReviewSubject } from "@overfactor/sdk";
+import {
+  generateReviewRequestSchema,
+  repoPathRequestSchema as repoPathQuerySchema,
+  reviewSubjectSchema,
+  trackBranchRequestSchema,
+  trackPrRequestSchema,
+} from "@overfactor/sdk";
+import type { ReviewTriggerOutcome } from "./review.ts";
 import type { SessionStore } from "./store.ts";
 
 export const DAEMON_VERSION = "0.0.0";
@@ -68,6 +77,20 @@ export interface AppDeps {
   integrations?: readonly AgentIntegrationManifest[];
   /** App-to-agent message handoff; injectable for focused tests. */
   conversationQueue?: ConversationQueue;
+  /** Branch-review orchestration; absent in minimal test apps. */
+  review?: {
+    get: (subject: ReviewSubject) => Promise<ReviewResponse>;
+    trigger: (subject: ReviewSubject, model: string | null) => Promise<ReviewTriggerOutcome>;
+  };
+  /** Manual branch/PR tracking (git + GitHub side effects); absent in minimal test apps. */
+  branchTracking?: {
+    listBranches: (repoPath: string) => Promise<string[]>;
+    defaultBranchFor: (repoPath: string) => Promise<string | null>;
+    /** Materializes the branch locally and returns its CR. Throws with a reason. */
+    trackBranch: (repoPath: string, branch: string) => Promise<ChangeRequest>;
+    /** Fetches the PR, creates a worktree, stamps + returns its CR. Throws with a reason. */
+    trackPr: (repoPath: string, url: string) => Promise<ChangeRequest>;
+  };
 }
 
 /**
@@ -187,6 +210,42 @@ export function createApp(deps: AppDeps) {
         if (!acknowledged) return c.json({ error: "unknown-message" as const }, 404);
         return c.json({ ok: true as const });
       })
+      // Branch-level guided review: one per (repo, branch), shared by every
+      // session on it. GET returns the review plus a fresh subject patch for
+      // rendering; POST triggers generation. The repo path lives in query/
+      // body (not the URL path) because it contains slashes.
+      .get("/reviews", zValidator("query", reviewSubjectSchema), async (c) => {
+        if (deps.review === undefined) {
+          return c.json({ error: "review-unavailable" as const }, 503);
+        }
+        return c.json(await deps.review.get(c.req.valid("query")));
+      })
+      .post("/reviews/generate", zValidator("json", generateReviewRequestSchema), async (c) => {
+        if (deps.review === undefined) {
+          return c.json({ error: "review-unavailable" as const }, 503);
+        }
+        const { model, ...subject } = c.req.valid("json");
+        const outcome = await deps.review.trigger(subject, model ?? null);
+        if (outcome !== "started") return c.json({ error: outcome }, 409);
+        return c.json({ ok: true as const }, 202);
+      })
+      // Reviewed marks are persisted per group so they survive app restarts
+      // and (for unchanged groups) regeneration.
+      .post(
+        "/reviews/:id/groups",
+        zValidator("json", z.object({ group: z.string().min(1), reviewed: z.boolean() })),
+        (c) => {
+          const reviewId = Number.parseInt(c.req.param("id"), 10);
+          const body = c.req.valid("json");
+          if (
+            Number.isNaN(reviewId) ||
+            !deps.store.setGroupReviewed(reviewId, body.group, body.reviewed)
+          ) {
+            return c.json({ error: "unknown-review-group" as const }, 404);
+          }
+          return c.json({ ok: true as const });
+        },
+      )
       // Full patch, computed on demand — never persisted. Scope matches the
       // stats: staged + unstaged vs HEAD of the session's worktree.
       .get("/sessions/:id/diff", async (c) => {
@@ -206,6 +265,49 @@ export function createApp(deps: AppDeps) {
         deps.store.applyEvent(event, repoPath);
         deps.onEvent?.(event, repoPath);
         return c.json({ accepted: true as const, reason: null }, 202);
+      })
+      // Manual branch tracking: pick any local/remote branch (or paste a PR
+      // URL) and get a Change Request — and therefore a guided review — for
+      // work no local session produced. The default branch is rejected:
+      // creating a CR for it would capture every default-branch session into
+      // a group, breaking the "ungrouped main sessions" sidebar semantics.
+      .get("/repos/branches", zValidator("query", repoPathQuerySchema), async (c) => {
+        if (deps.branchTracking === undefined) {
+          return c.json({ error: "branch-tracking-unavailable" as const }, 503);
+        }
+        const { path } = c.req.valid("query");
+        const [branches, defaultBranch] = await Promise.all([
+          deps.branchTracking.listBranches(path),
+          deps.branchTracking.defaultBranchFor(path),
+        ]);
+        return c.json({ branches, defaultBranch });
+      })
+      .post("/repos/branch", zValidator("json", trackBranchRequestSchema), async (c) => {
+        if (deps.branchTracking === undefined) {
+          return c.json({ error: "branch-tracking-unavailable" as const }, 503);
+        }
+        const { path, branch } = c.req.valid("json");
+        if (branch === (await deps.branchTracking.defaultBranchFor(path))) {
+          return c.json({ error: "default-branch" as const }, 409);
+        }
+        try {
+          return c.json({ cr: await deps.branchTracking.trackBranch(path, branch) });
+        } catch (raised) {
+          const reason = raised instanceof Error ? raised.message : "track failed";
+          return c.json({ error: reason }, 400);
+        }
+      })
+      .post("/repos/pr", zValidator("json", trackPrRequestSchema), async (c) => {
+        if (deps.branchTracking === undefined) {
+          return c.json({ error: "branch-tracking-unavailable" as const }, 503);
+        }
+        const { path, url } = c.req.valid("json");
+        try {
+          return c.json({ cr: await deps.branchTracking.trackPr(path, url) });
+        } catch (raised) {
+          const reason = raised instanceof Error ? raised.message : "track failed";
+          return c.json({ error: reason }, 400);
+        }
       })
       // Repo routes read/write config.json directly so responses are always
       // fresh; the server's file watcher propagates changes into the running

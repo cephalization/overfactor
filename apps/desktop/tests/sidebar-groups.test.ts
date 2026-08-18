@@ -122,6 +122,9 @@ describe("groupSidebarItems", () => {
 
     expect(groups[0]?.crGroups).toEqual([]);
     expect(groups[0]?.branchGroups[0]?.sessions[0]?.id).toBe("session");
-    expect(groups[1]?.crGroups).toEqual([]);
+    // The CR stays visible under its own repo with no sessions — manually
+    // tracked branches and fetched PRs are exactly this session-less case.
+    expect(groups[1]?.crGroups.map((group) => group.cr.id)).toEqual([3]);
+    expect(groups[1]?.crGroups[0]?.sessions).toEqual([]);
   });
 });

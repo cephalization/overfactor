@@ -46,12 +46,12 @@ export function groupSidebarItems(
     const repoSessions = sessions.filter((session) => session.repoPath === path);
     const repoCrs = crs.filter((cr) => cr.repoPath === path);
     const repoCrIds = new Set(repoCrs.map((cr) => cr.id));
-    const crGroups = repoCrs
-      .map((cr) => ({
-        cr,
-        sessions: repoSessions.filter((session) => session.crId === cr.id),
-      }))
-      .filter((group) => group.sessions.length > 0);
+    // Session-less CRs stay visible: manually tracked branches and fetched
+    // PRs are exactly the "no local session" case the sidebar must surface.
+    const crGroups = repoCrs.map((cr) => ({
+      cr,
+      sessions: repoSessions.filter((session) => session.crId === cr.id),
+    }));
 
     const byBranch = new Map<string | null, Session[]>();
     for (const session of repoSessions) {

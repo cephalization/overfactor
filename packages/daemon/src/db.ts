@@ -41,6 +41,26 @@ export const changeRequests = sqliteTable("change_requests", {
 
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 
+export const reviews = sqliteTable("reviews", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** Reviews are branch-level: one per (repoPath, branch). */
+  repoPath: text("repo_path").notNull(),
+  branch: text("branch").notNull(),
+  status: text("status").notNull(),
+  engine: text("engine").notNull(),
+  model: text("model"),
+  diffHash: text("diff_hash"),
+  /** JSON array of ReviewGroup. */
+  groups: text("groups").notNull().default("[]"),
+  /** JSON array of reviewed group names. */
+  reviewedGroups: text("reviewed_groups").notNull().default("[]"),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type ReviewRow = typeof reviews.$inferSelect;
+
 // Kept in lockstep with the drizzle tables above; a drizzle-kit migration
 // pipeline replaces this once the schema outgrows hand-managed DDL.
 const DDL = `
@@ -76,7 +96,35 @@ CREATE TABLE IF NOT EXISTS change_requests (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS change_requests_repo_branch
   ON change_requests (repo_path, branch);
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_path TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  status TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  model TEXT,
+  diff_hash TEXT,
+  groups TEXT NOT NULL DEFAULT '[]',
+  reviewed_groups TEXT NOT NULL DEFAULT '[]',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS reviews_repo_branch ON reviews (repo_path, branch);
 `;
+
+/**
+ * Reviews briefly existed keyed by CR/session before moving to branch-level
+ * subjects. Pre-release, so an old-shape table is simply dropped and
+ * recreated by the DDL; reviews regenerate on demand.
+ */
+function dropSubjectKeyedReviews(sqlite: InstanceType<typeof Database>): void {
+  // SAFETY: SQLite's table_info pragma returns rows containing a string name column.
+  const columns = new Set(
+    (sqlite.pragma("table_info(reviews)") as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (columns.has("cr_id")) sqlite.exec("DROP TABLE reviews;");
+}
 
 /** Columns added after the sessions table first shipped; applied to old dbs. */
 const SESSION_COLUMN_MIGRATIONS = {
@@ -93,6 +141,7 @@ export type Db = ReturnType<typeof openDb>;
 export function openDb(path: string) {
   const sqlite = new Database(path);
   sqlite.pragma("journal_mode = WAL");
+  dropSubjectKeyedReviews(sqlite);
   sqlite.exec(DDL);
   // SAFETY: SQLite's table_info pragma returns rows containing a string name column.
   const existing = new Set(
@@ -101,5 +150,5 @@ export function openDb(path: string) {
   for (const [column, statement] of Object.entries(SESSION_COLUMN_MIGRATIONS)) {
     if (!existing.has(column)) sqlite.exec(statement);
   }
-  return drizzle(sqlite, { schema: { sessions, changeRequests } });
+  return drizzle(sqlite, { schema: { sessions, changeRequests, reviews } });
 }

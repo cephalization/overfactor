@@ -20,6 +20,10 @@ import { openDb } from "./db.ts";
 import { computeDiffStats, currentBranch, defaultBranch, mainWorktreeRoot } from "./diff.ts";
 import { GitIgnoreMatcher, isBuiltInIgnoredPath } from "./gitignore.ts";
 import { createLogger, type Logger } from "./logger.ts";
+import { ensureLocalBranch, createPrWorktree, listBranches } from "./branches.ts";
+import { createGithubClient, type GithubRepo, githubOrigin, parsePullUrl } from "./github.ts";
+import { PrWatcher } from "./pr-watcher.ts";
+import { ReviewRunner } from "./review.ts";
 import { SessionStore } from "./store.ts";
 
 /** Fixed default port: binding it is the single-instance lock. */
@@ -27,6 +31,7 @@ export const DEFAULT_PORT = 41417;
 
 const DIFF_DEBOUNCE_MS = 300;
 const WATCHER_REARM_DELAY_MS = 5000;
+const PR_SCAN_INTERVAL_MS = 2 * 60 * 1000;
 
 const loggedErrorSchema = z.unknown().transform((raised): Error => {
   if (raised instanceof Error) return raised;
@@ -154,9 +159,90 @@ export async function startDaemon(options?: {
     return resolved;
   };
 
+  const reviewRunner = new ReviewRunner({
+    store,
+    defaultBranchFor: repoDefaultBranch,
+    log: log.child({ subsystem: "review" }),
+  });
+
+  // GitHub PR features degrade to absent when gh has no login. Origins are
+  // cached per repo path (a remote URL changing mid-run is not worth a stat).
+  const githubLog = log.child({ subsystem: "github" });
+  const github = await createGithubClient(githubLog);
+  const origins = new Map<string, GithubRepo | null>();
+  const originFor = async (repoPath: string): Promise<GithubRepo | null> => {
+    if (!origins.has(repoPath)) origins.set(repoPath, await githubOrigin(repoPath));
+    return origins.get(repoPath) ?? null;
+  };
+  const prWatcher =
+    github === null
+      ? null
+      : new PrWatcher({
+          store,
+          github,
+          repos: () => config.repos,
+          originFor,
+          onPrDetected: (subject) => void reviewRunner.trigger(subject, null),
+          log: githubLog,
+        });
+  let prScanRunning = false;
+  const scanPrs = (): void => {
+    if (prWatcher === null || closing || prScanRunning) return;
+    prScanRunning = true;
+    void prWatcher
+      .scan()
+      .catch((raised) => githubLog.warn({ error: loggedErrorSchema.parse(raised) }, "PR scan"))
+      .finally(() => {
+        prScanRunning = false;
+      });
+  };
+  const prScanTimer = prWatcher === null ? null : setInterval(scanPrs, PR_SCAN_INTERVAL_MS);
+  scanPrs();
+
+  const branchTracking = {
+    listBranches,
+    defaultBranchFor: repoDefaultBranch,
+    trackBranch: async (repoPath: string, branch: string) => {
+      if (!config.repos.includes(repoPath)) throw new Error("repo is not tracked");
+      await ensureLocalBranch(repoPath, branch);
+      const cr = store.ensureChangeRequest(repoPath, branch);
+      scanPrs();
+      return cr;
+    },
+    trackPr: async (repoPath: string, url: string) => {
+      if (!config.repos.includes(repoPath)) throw new Error("repo is not tracked");
+      const parsed = parsePullUrl(url);
+      if (parsed === null) throw new Error("not a GitHub pull request URL");
+      const origin = await originFor(repoPath);
+      if (origin === null) throw new Error("repo has no GitHub origin remote");
+      if (
+        origin.owner.toLowerCase() !== parsed.owner.toLowerCase() ||
+        origin.repo.toLowerCase() !== parsed.repo.toLowerCase()
+      ) {
+        throw new Error(`PR belongs to ${parsed.owner}/${parsed.repo}, not this repo's origin`);
+      }
+      if (github === null) throw new Error("gh is not logged in (run `gh auth login`)");
+      const pull = await github.getPull(parsed.owner, parsed.repo, parsed.number);
+      if (pull === null) throw new Error(`PR #${parsed.number} not found`);
+      const { branch } = await createPrWorktree(repoPath, pull.number, pull.headRef);
+      const cr = store.ensureChangeRequest(repoPath, branch);
+      store.setChangeRequestPr(cr.id, {
+        number: pull.number,
+        state: pull.state,
+        url: pull.url,
+        title: pull.title,
+      });
+      // The walkthrough should be waiting when the user opens the CR.
+      void reviewRunner.trigger({ repoPath, branch }, null);
+      return store.findChangeRequest(repoPath, branch) ?? cr;
+    },
+  };
+
   const app = createApp({
     store,
     resolveRepo,
+    review: reviewRunner,
+    branchTracking,
     onEvent: (event, repoPath) => scheduleDiff(event.cwd, repoPath),
     onDrop: (event) =>
       log.warn(
@@ -191,6 +277,7 @@ export async function startDaemon(options?: {
   };
   store.events.on("changed", () => broadcast("sessions"));
   store.events.on("crsChanged", () => broadcast("crs"));
+  store.events.on("reviewsChanged", () => broadcast("reviews"));
 
   // Live sessions' transcript files are watched so the app's transcript pane
   // stays in sync as the agent talks. The watched set follows session state;
@@ -399,6 +486,7 @@ export async function startDaemon(options?: {
 
   const close = async (): Promise<void> => {
     closing = true;
+    if (prScanTimer !== null) clearInterval(prScanTimer);
     for (const timer of diffTimers.values()) clearTimeout(timer);
     diffTimers.clear();
     if (transcriptBroadcastTimer !== null) clearTimeout(transcriptBroadcastTimer);

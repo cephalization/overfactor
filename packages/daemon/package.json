@@ -36,6 +36,7 @@
     "emittery": "catalog:",
     "hono": "catalog:",
     "ignore": "catalog:",
+    "octokit": "catalog:",
     "pino": "catalog:",
     "zod": "catalog:"
   },
