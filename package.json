@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "ready": "vp fmt && vp lint && vp run -F '!just-git' test && vp run -r build",
-    "dev": "vp run -F '@overfactor/daemon...' build && concurrently -k -n sdk,hook,daemon-build,daemon,app -c auto 'vp run @overfactor/sdk#dev' 'vp run @overfactor/integration-claude-code#dev' 'vp run @overfactor/daemon#dev' 'node packages/daemon/dist/cli.mjs daemon stop && node --watch packages/daemon/dist/cli.mjs daemon start --foreground' 'vp run @overfactor/desktop#dev'",
+    "dev": "vp run -F '@overfactor/daemon...' build && concurrently -k -n sdk,hook,daemon-build,daemon,app -c auto 'vp run @overfactor/sdk#dev' 'vp run @overfactor/integration-claude-code#dev' 'vp run @overfactor/daemon#dev' 'node scripts/dev-daemon.mjs' 'vp run @overfactor/desktop#dev'",
     "prepare": "vp config"
   },
   "devDependencies": {
