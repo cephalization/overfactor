@@ -4,6 +4,7 @@ import {
   claudeReviewEngineAvailable,
   type ClaudeCliRunner,
   generateReview,
+  renderPatchForReview,
 } from "../src/review.ts";
 
 const request: ReviewEngineRequest = {
@@ -106,5 +107,52 @@ describe("claudeReviewEngineAvailable", () => {
     expect(await claudeReviewEngineAvailable(() => Promise.reject(new Error("ENOENT")))).toBe(
       false,
     );
+  });
+});
+
+describe("renderPatchForReview", () => {
+  const fileChunk = (path: string, body: string, status = "") =>
+    `diff --git a/${path} b/${path}\n${status}${body}\n`;
+
+  it("lists every file in the manifest with status and counts", () => {
+    const patch =
+      fileChunk("src/a.ts", "+one\n+two") +
+      fileChunk("src/b.ts", "-old", "deleted file mode 100644\n") +
+      fileChunk("src/c.ts", "+new", "new file mode 100644\n");
+    const { manifest, omittedCount } = renderPatchForReview(patch);
+    expect(manifest).toBe("M +2 -0 src/a.ts\nD +0 -1 src/b.ts\nA +1 -0 src/c.ts");
+    // Deleted bodies are collapsed, so one omission even under budget.
+    expect(omittedCount).toBe(1);
+  });
+
+  it("collapses deleted and generated bodies regardless of budget", () => {
+    const patch =
+      fileChunk("src/deleted.ts", "-gone", "deleted file mode 100644\n") +
+      fileChunk("src/__generated__/query.graphql.ts", "+generated");
+    const { diff } = renderPatchForReview(patch);
+    expect(diff).toContain("[... body omitted: deleted file");
+    expect(diff).toContain("[... body omitted: generated/lockfile content");
+    expect(diff).not.toContain("-gone");
+    expect(diff).not.toContain("+generated");
+  });
+
+  it("keeps whole files within budget and stubs the rest instead of cutting mid-file", () => {
+    const big = `+${"x".repeat(200_000)}`;
+    const patch = fileChunk("src/01-first.ts", "+small") + fileChunk("src/02-huge.ts", big);
+    const { diff, manifest, omittedCount } = renderPatchForReview(patch);
+    // The small first file stays whole; the huge one becomes a stub.
+    expect(diff).toContain("+small");
+    expect(diff).toContain("[... body omitted for length (+1 -0)");
+    expect(diff).not.toContain("x".repeat(100));
+    // …but both files remain groupable via the manifest.
+    expect(manifest).toContain("src/01-first.ts");
+    expect(manifest).toContain("src/02-huge.ts");
+    expect(omittedCount).toBe(1);
+  });
+
+  it("extracts the b/ side path the same way the daemon does", () => {
+    const patch = 'diff --git "a/odd path.ts" "b/odd path.ts"\n+added\n';
+    const { manifest } = renderPatchForReview(patch);
+    expect(manifest).toContain("odd path.ts");
   });
 });
