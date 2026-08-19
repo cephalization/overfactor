@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { reviewSettingsSchema } from "@overfactor/sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.ts";
 import { openDb } from "../src/db.ts";
@@ -85,6 +86,43 @@ describe("repo routes", () => {
     });
     expect(await del.json()).toEqual({ repos: [] });
     expect(await (await app.request("/repos")).json()).toEqual({ repos: [] });
+  });
+
+  it("persists review engine, provider, and model settings", async () => {
+    const app = makeApp();
+    const initial = reviewSettingsSchema.parse(
+      await (await app.request("/settings/review")).json(),
+    );
+    expect(initial).toEqual({ agent: "claude-code", provider: null, model: "sonnet" });
+
+    const update = await app.request("/settings/review", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent: "pi",
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+      }),
+    });
+    expect(update.status).toBe(200);
+    expect(reviewSettingsSchema.parse(await update.json())).toEqual({
+      agent: "pi",
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+    });
+    expect(
+      reviewSettingsSchema.parse(await (await app.request("/settings/review")).json()),
+    ).toEqual({ agent: "pi", provider: "openai-codex", model: "gpt-5.6-sol" });
+  });
+
+  it("rejects incomplete Pi review settings", async () => {
+    const app = makeApp();
+    const update = await app.request("/settings/review", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "pi", provider: "", model: "gpt-5.6-sol" }),
+    });
+    expect(update.status).toBe(400);
   });
 
   it("rejects non-git directories with 400", async () => {

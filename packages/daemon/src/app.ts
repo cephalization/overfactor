@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { claudeCodeIntegrationManifest } from "@overfactor/integration-claude-code";
 import { parseClaudeTranscript } from "@overfactor/integration-claude-code/transcript";
 import { piIntegrationManifest } from "@overfactor/integration-pi";
+import { listPiReviewModels } from "@overfactor/integration-pi/review";
 import { parsePiTranscript } from "@overfactor/integration-pi/transcript";
 import type {
   AgentIntegrationManifest,
@@ -16,6 +17,7 @@ import {
   conversationMessageAckSchema,
   hookEventSchema,
   repoPathRequestSchema,
+  reviewSettingsSchema,
 } from "@overfactor/sdk";
 import { z } from "zod";
 import { readOverfactorConfig } from "@overfactor/sdk/node";
@@ -25,6 +27,7 @@ import { sep } from "node:path";
 import { ConversationQueue } from "./conversation.ts";
 import { computeDiffPatch } from "./diff.ts";
 import { addRepo, removeRepo } from "./repos.ts";
+import { updateReviewSettings } from "./settings.ts";
 import type { ChangeRequest, ReviewResponse, ReviewSubject } from "@overfactor/sdk";
 import {
   generateReviewRequestSchema,
@@ -121,6 +124,20 @@ export function createApp(deps: AppDeps) {
       .get("/sessions", (c) => c.json(deps.store.list()))
       .get("/crs", (c) => c.json(deps.store.listChangeRequests()))
       .get("/agents", (c) => c.json(integrations))
+      .get("/agents/:agent/models", async (c) => {
+        if (c.req.param("agent") !== "pi") {
+          return c.json({ error: "model-list-unavailable" as const }, 404);
+        }
+        try {
+          return c.json({ models: await listPiReviewModels() });
+        } catch {
+          return c.json({ error: "model-list-unavailable" as const }, 503);
+        }
+      })
+      .get("/settings/review", async (c) => c.json((await readOverfactorConfig()).review))
+      .put("/settings/review", zValidator("json", reviewSettingsSchema), async (c) =>
+        c.json(await updateReviewSettings(c.req.valid("json"))),
+      )
       // Manual rename: wins over agent-generated and prompt-derived titles.
       .post(
         "/sessions/:id/title",
@@ -312,7 +329,7 @@ export function createApp(deps: AppDeps) {
       // Repo routes read/write config.json directly so responses are always
       // fresh; the server's file watcher propagates changes into the running
       // config and broadcasts the WS invalidation.
-      .get("/repos", async (c) => c.json(await readOverfactorConfig()))
+      .get("/repos", async (c) => c.json({ repos: (await readOverfactorConfig()).repos }))
       .post("/repos", zValidator("json", repoPathRequestSchema), async (c) => {
         const result = await addRepo(c.req.valid("json").path);
         if (!result.ok) {

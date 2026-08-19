@@ -9,6 +9,43 @@ import { z } from "zod";
 export const agentKindSchema = z.enum(["claude-code", "pi"]);
 export type AgentKind = z.infer<typeof agentKindSchema>;
 
+const reviewSettingValueSchema = z.string().trim().min(1).max(200);
+
+/** Default engine policy used until the user chooses one in Settings. */
+export const reviewSettingsSchema = z.discriminatedUnion("agent", [
+  z.object({
+    agent: z.literal("claude-code"),
+    /** Claude Code owns its provider/authentication; only its model alias is configurable. */
+    provider: z.null(),
+    model: reviewSettingValueSchema,
+  }),
+  z.object({
+    agent: z.literal("pi"),
+    provider: reviewSettingValueSchema,
+    model: reviewSettingValueSchema,
+  }),
+]);
+export type ReviewSettings = z.infer<typeof reviewSettingsSchema>;
+
+export const DEFAULT_REVIEW_SETTINGS: ReviewSettings = {
+  agent: "claude-code",
+  provider: null,
+  model: "sonnet",
+};
+
+/** One authenticated provider/model pair available to a review engine. */
+export const reviewModelOptionSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  name: z.string().min(1),
+});
+export type ReviewModelOption = z.infer<typeof reviewModelOptionSchema>;
+
+export const reviewModelsResponseSchema = z.object({
+  models: z.array(reviewModelOptionSchema),
+});
+export type ReviewModelsResponse = z.infer<typeof reviewModelsResponseSchema>;
+
 /** Optional features an agent integration can expose to Overfactor clients. */
 export const agentCapabilitySchema = z.enum(["continue-conversation", "generate-review"]);
 export type AgentCapability = z.infer<typeof agentCapabilitySchema>;
@@ -222,6 +259,7 @@ export const reviewSchema = z.object({
   branch: z.string().min(1),
   status: reviewStatusSchema,
   engine: agentKindSchema,
+  provider: z.string().nullable(),
   model: z.string().nullable(),
   /** Content hash of the reviewed patch; regeneration staleness keys off it. */
   diffHash: z.string().nullable(),
@@ -296,7 +334,7 @@ export function normalizeReviewGroups(
 export const wsServerMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("invalidate"),
-    collection: z.enum(["sessions", "repos", "crs", "transcripts", "reviews"]),
+    collection: z.enum(["sessions", "repos", "crs", "transcripts", "reviews", "settings"]),
   }),
 ]);
 export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
@@ -352,5 +390,7 @@ export type DaemonInfo = z.infer<typeof daemonInfoSchema>;
 export const overfactorConfigSchema = z.object({
   /** Absolute paths of repos whose sessions the daemon tracks. */
   repos: z.array(z.string()).default([]),
+  /** Agent/provider/model policy for automatic and on-demand reviews. */
+  review: reviewSettingsSchema.default(DEFAULT_REVIEW_SETTINGS),
 });
 export type OverfactorConfig = z.infer<typeof overfactorConfigSchema>;

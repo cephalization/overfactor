@@ -1,7 +1,7 @@
 {
   "name": "@overfactor/integration-pi",
   "version": "0.0.0",
-  "description": "Pi extension integration for Overfactor lifecycle and session events.",
+  "description": "Pi integration for Overfactor lifecycle events, conversations, transcripts, and reviews.",
   "keywords": [
     "pi-package"
   ],
@@ -15,6 +15,7 @@
     ".": "./dist/index.mjs",
     "./install": "./dist/install.mjs",
     "./package.json": "./package.json",
+    "./review": "./dist/review.mjs",
     "./transcript": "./dist/transcript.mjs"
   },
   "scripts": {
@@ -24,6 +25,7 @@
     "check": "vp check"
   },
   "dependencies": {
+    "@overfactor/integration-utils": "workspace:*",
     "@overfactor/sdk": "workspace:*",
     "zod": "catalog:"
   },

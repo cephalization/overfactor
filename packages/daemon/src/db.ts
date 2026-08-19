@@ -48,6 +48,7 @@ export const reviews = sqliteTable("reviews", {
   branch: text("branch").notNull(),
   status: text("status").notNull(),
   engine: text("engine").notNull(),
+  provider: text("provider"),
   model: text("model"),
   diffHash: text("diff_hash"),
   /** JSON array of ReviewGroup. */
@@ -102,6 +103,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   branch TEXT NOT NULL,
   status TEXT NOT NULL,
   engine TEXT NOT NULL,
+  provider TEXT,
   model TEXT,
   diff_hash TEXT,
   groups TEXT NOT NULL DEFAULT '[]',
@@ -135,6 +137,10 @@ const SESSION_COLUMN_MIGRATIONS = {
   archived: "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
 } satisfies Record<string, string>;
 
+const REVIEW_COLUMN_MIGRATIONS = {
+  provider: "ALTER TABLE reviews ADD COLUMN provider TEXT",
+} satisfies Record<string, string>;
+
 export type Db = ReturnType<typeof openDb>;
 
 /** Opens (creating if needed) the daemon database. Use ":memory:" in tests. */
@@ -149,6 +155,13 @@ export function openDb(path: string) {
   );
   for (const [column, statement] of Object.entries(SESSION_COLUMN_MIGRATIONS)) {
     if (!existing.has(column)) sqlite.exec(statement);
+  }
+  // SAFETY: SQLite's table_info pragma returns rows containing a string name column.
+  const existingReviewColumns = new Set(
+    (sqlite.pragma("table_info(reviews)") as Array<{ name: string }>).map((c) => c.name),
+  );
+  for (const [column, statement] of Object.entries(REVIEW_COLUMN_MIGRATIONS)) {
+    if (!existingReviewColumns.has(column)) sqlite.exec(statement);
   }
   return drizzle(sqlite, { schema: { sessions, changeRequests, reviews } });
 }

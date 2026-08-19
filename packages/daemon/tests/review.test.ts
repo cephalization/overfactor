@@ -48,7 +48,6 @@ function fakeEngine(result: ReviewEngineResult | Error) {
   const requests: ReviewEngineRequest[] = [];
   const engine: ReviewEngine = {
     agent: "claude-code",
-    defaultModel: "sonnet",
     available: () => Promise.resolve(true),
     generate: (request) => {
       requests.push(request);
@@ -100,8 +99,8 @@ describe("ReviewRunner", () => {
     const review = await waitForSettled(store, subjectFor(repo));
     expect(review.status).toBe("ready");
     expect(review.engine).toBe("claude-code");
-    // The runner records the engine's explicit default — reviews never
-    // silently inherit the harness's own (possibly expensive) default model.
+    // The persisted default is explicit — reviews never silently inherit the
+    // harness's own (possibly expensive) default model.
     expect(review.model).toBe("sonnet");
     expect(review.groups).toEqual([
       { name: "Add two", summary: "Appends a line.", files: ["a.txt"] },
@@ -112,6 +111,49 @@ describe("ReviewRunner", () => {
     const response = await runner.get(subjectFor(repo));
     expect(response.review?.status).toBe("ready");
     expect(response.patch).toContain("+two");
+  });
+
+  it("uses the configured Pi provider and model instead of the session agent", async () => {
+    const repo = await makeRepo();
+    await writeFile(join(repo, "a.txt"), "one\ntwo\n");
+    const store = storeWithSession(repo);
+    const calls: Array<{ provider: string | null; model: string }> = [];
+    const runner = new ReviewRunner({
+      store,
+      defaultBranchFor: async () => "main",
+      reviewSettings: () => ({
+        agent: "pi",
+        provider: "openai-codex",
+        model: "gpt-5.6-sol",
+      }),
+      engines: [
+        {
+          agent: "claude-code",
+          available: () => Promise.resolve(true),
+          generate: () => Promise.reject(new Error("wrong engine")),
+        },
+        {
+          agent: "pi",
+          available: () => Promise.resolve(true),
+          generate: (_request, provider, model) => {
+            calls.push({ provider, model });
+            return Promise.resolve({
+              groups: [{ name: "Pi review", summary: "Uses Pi.", files: ["a.txt"] }],
+            });
+          },
+        },
+      ],
+    });
+
+    expect(await runner.trigger(subjectFor(repo))).toBe("started");
+    const review = await waitForSettled(store, subjectFor(repo));
+    expect(review).toMatchObject({
+      status: "ready",
+      engine: "pi",
+      provider: "openai-codex",
+      model: "gpt-5.6-sol",
+    });
+    expect(calls).toEqual([{ provider: "openai-codex", model: "gpt-5.6-sol" }]);
   });
 
   it("sweeps files the engine missed into a catch-all group", async () => {
@@ -162,7 +204,6 @@ describe("ReviewRunner", () => {
       engines: [
         {
           agent: "claude-code",
-          defaultModel: "sonnet",
           available: () => Promise.resolve(true),
           generate: () => gate,
         },
@@ -217,7 +258,6 @@ describe("ReviewRunner", () => {
       engines: [
         {
           agent: "claude-code",
-          defaultModel: "sonnet",
           available: () => Promise.resolve(false),
           generate: () => Promise.reject(new Error("unavailable")),
         },

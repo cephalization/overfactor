@@ -162,6 +162,7 @@ export async function startDaemon(options?: {
   const reviewRunner = new ReviewRunner({
     store,
     defaultBranchFor: repoDefaultBranch,
+    reviewSettings: async () => (await readOverfactorConfig()).review,
     log: log.child({ subsystem: "review" }),
   });
 
@@ -480,7 +481,8 @@ export async function startDaemon(options?: {
       void refreshRealRepoIndex();
       watchRepos(config.repos);
       broadcast("repos");
-      watchLog.info({ repos: config.repos }, "config reloaded");
+      broadcast("settings");
+      watchLog.info({ repos: config.repos, review: config.review }, "config reloaded");
     });
   });
 

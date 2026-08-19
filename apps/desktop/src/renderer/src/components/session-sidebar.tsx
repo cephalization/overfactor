@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitBranchPlus,
   GitPullRequestArrow,
+  Settings,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -147,6 +148,7 @@ export function SessionSidebar({
   selection,
   onSelect,
   onSelectReview,
+  onOpenSettings,
   repos,
   onAddRepo,
   onRemoveRepo,
@@ -159,6 +161,7 @@ export function SessionSidebar({
   selection: Selection | null;
   onSelect: (id: string) => void;
   onSelectReview: (subject: ReviewSubject) => void;
+  onOpenSettings: () => void;
   onSetArchived: (id: string, archived: boolean) => void;
 } & RepoSectionProps) {
   const [trackRepo, setTrackRepo] = useState<string | null>(null);
@@ -188,15 +191,30 @@ export function SessionSidebar({
       <SidebarHeader className="gap-1 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold tracking-tight">Overfactor</span>
-          <button
-            type="button"
-            className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
-            title="Track a repo"
-            onClick={onAddRepo}
-          >
-            <FolderPlus className="size-4" />
-            <span className="sr-only">Track a repo</span>
-          </button>
+          <span className="flex items-center gap-1">
+            <button
+              type="button"
+              className={cn(
+                "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none",
+                selection?.kind === "settings" &&
+                  "bg-sidebar-accent text-sidebar-accent-foreground",
+              )}
+              title="Settings"
+              onClick={onOpenSettings}
+            >
+              <Settings className="size-4" />
+              <span className="sr-only">Settings</span>
+            </button>
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+              title="Track a repo"
+              onClick={onAddRepo}
+            >
+              <FolderPlus className="size-4" />
+              <span className="sr-only">Track a repo</span>
+            </button>
+          </span>
         </div>
         {addRepoError !== null && <p className="text-xs text-destructive">{addRepoError}</p>}
         <div className="flex items-center gap-1 border-t border-sidebar-border pt-2">

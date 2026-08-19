@@ -20,7 +20,7 @@ export * from "./transport.ts";
 
 export const piIntegrationManifest = {
   agent: "pi",
-  capabilities: ["continue-conversation"],
+  capabilities: ["continue-conversation", "generate-review"],
 } satisfies AgentIntegrationManifest;
 
 interface ActiveConversationSubscription {

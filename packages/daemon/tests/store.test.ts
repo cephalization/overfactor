@@ -221,7 +221,12 @@ describe("SessionStore reviews", () => {
 
   it("walks begin → complete and keeps one review per subject", () => {
     const store = makeStore();
-    const began = store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    const began = store.beginReview(
+      { repoPath: "/repo", branch: "main" },
+      "claude-code",
+      null,
+      null,
+    );
     expect(began.status).toBe("generating");
 
     store.completeReview({ repoPath: "/repo", branch: "main" }, groups, "hash-1");
@@ -230,16 +235,21 @@ describe("SessionStore reviews", () => {
     expect(review?.groups).toEqual(groups);
 
     // Regeneration reuses the same row (and id) for the subject.
-    const again = store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    const again = store.beginReview(
+      { repoPath: "/repo", branch: "main" },
+      "claude-code",
+      null,
+      null,
+    );
     expect(again.id).toBe(review?.id);
     expect(again.groups).toEqual(groups);
   });
 
   it("keys reviews by repo and branch independently", () => {
     const store = makeStore();
-    store.beginReview({ repoPath: "/repo", branch: "feat/x" }, "claude-code", null);
-    store.beginReview({ repoPath: "/repo", branch: "main" }, "pi", "some-model");
-    store.beginReview({ repoPath: "/other", branch: "main" }, "claude-code", null);
+    store.beginReview({ repoPath: "/repo", branch: "feat/x" }, "claude-code", null, null);
+    store.beginReview({ repoPath: "/repo", branch: "main" }, "pi", "openai-codex", "some-model");
+    store.beginReview({ repoPath: "/other", branch: "main" }, "claude-code", null, null);
     expect(store.getReview({ repoPath: "/repo", branch: "feat/x" })?.engine).toBe("claude-code");
     expect(store.getReview({ repoPath: "/repo", branch: "main" })?.model).toBe("some-model");
     expect(store.getReview({ repoPath: "/other", branch: "main" })?.engine).toBe("claude-code");
@@ -247,7 +257,12 @@ describe("SessionStore reviews", () => {
 
   it("keeps reviewed marks only for groups that survive regeneration", () => {
     const store = makeStore();
-    const review = store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    const review = store.beginReview(
+      { repoPath: "/repo", branch: "main" },
+      "claude-code",
+      null,
+      null,
+    );
     store.completeReview({ repoPath: "/repo", branch: "main" }, groups, "hash-1");
     expect(store.setGroupReviewed(review.id, "Mechanism", true)).toBe(true);
     expect(store.setGroupReviewed(review.id, "Tests", true)).toBe(true);
@@ -265,16 +280,21 @@ describe("SessionStore reviews", () => {
   it("rejects reviewed marks for unknown reviews and groups", () => {
     const store = makeStore();
     expect(store.setGroupReviewed(999, "Mechanism", true)).toBe(false);
-    const review = store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    const review = store.beginReview(
+      { repoPath: "/repo", branch: "main" },
+      "claude-code",
+      null,
+      null,
+    );
     store.completeReview({ repoPath: "/repo", branch: "main" }, groups, "hash-1");
     expect(store.setGroupReviewed(review.id, "Nope", true)).toBe(false);
   });
 
   it("records failures without losing prior groups", () => {
     const store = makeStore();
-    store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null, null);
     store.completeReview({ repoPath: "/repo", branch: "main" }, groups, "hash-1");
-    store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null);
+    store.beginReview({ repoPath: "/repo", branch: "main" }, "claude-code", null, null);
     store.failReview({ repoPath: "/repo", branch: "main" }, "usage limit reached");
     const review = store.getReview({ repoPath: "/repo", branch: "main" });
     expect(review).toMatchObject({ status: "failed", error: "usage limit reached" });

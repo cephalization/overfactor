@@ -87,6 +87,7 @@ function rowToReview(row: ReviewRow): Review {
     branch: row.branch,
     status: row.status,
     engine: row.engine,
+    provider: row.provider,
     model: row.model,
     diffHash: row.diffHash,
     groups: storedGroupsSchema.parse(JSON.parse(row.groups)),
@@ -383,13 +384,18 @@ export class SessionStore {
    * into `generating`, preserving the previous groups and reviewed marks so
    * the UI keeps showing the old review while the new one is produced.
    */
-  beginReview(subject: ReviewSubject, engine: AgentKind, model: string | null): Review {
+  beginReview(
+    subject: ReviewSubject,
+    engine: AgentKind,
+    provider: string | null,
+    model: string | null,
+  ): Review {
     const timestamp = this.now().toISOString();
     const existing = this.db.select().from(reviews).where(reviewSubjectClause(subject)).get();
     if (existing !== undefined) {
       this.db
         .update(reviews)
-        .set({ status: "generating", engine, model, error: null, updatedAt: timestamp })
+        .set({ status: "generating", engine, provider, model, error: null, updatedAt: timestamp })
         .where(eq(reviews.id, existing.id))
         .run();
     } else {
@@ -400,6 +406,7 @@ export class SessionStore {
           branch: subject.branch,
           status: "generating",
           engine,
+          provider,
           model,
           createdAt: timestamp,
           updatedAt: timestamp,

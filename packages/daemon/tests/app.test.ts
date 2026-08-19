@@ -55,7 +55,7 @@ describe("daemon app", () => {
       .parse(await (await app.request("/agents")).json());
     expect(integrations).toEqual([
       { agent: "claude-code", capabilities: ["generate-review"] },
-      { agent: "pi", capabilities: ["continue-conversation"] },
+      { agent: "pi", capabilities: ["continue-conversation", "generate-review"] },
     ]);
 
     await app.request("/events", {
@@ -317,7 +317,7 @@ describe("review routes", () => {
 
   it("serves the branch review with its patch and validates the subject", async () => {
     const { app, store } = makeReviewApp();
-    store.beginReview(subject, "claude-code", null);
+    store.beginReview(subject, "claude-code", null, null);
     store.completeReview(subject, reviewGroups, "hash");
 
     const response = await app.request(
@@ -359,7 +359,7 @@ describe("review routes", () => {
 
   it("persists reviewed marks and 404s unknown review groups", async () => {
     const { app, store } = makeReviewApp();
-    const review = store.beginReview(subject, "claude-code", null);
+    const review = store.beginReview(subject, "claude-code", null, null);
     store.completeReview(subject, reviewGroups, "hash");
 
     const mark = await app.request(`/reviews/${review.id}/groups`, {

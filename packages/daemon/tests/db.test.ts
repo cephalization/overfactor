@@ -48,4 +48,41 @@ describe("database migrations", () => {
     const store = new SessionStore(openDb(path));
     expect(store.get("session-1")).toMatchObject({ archived: false, model: null });
   });
+
+  it("adds provider=null to existing branch reviews", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "overfactor-db-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "daemon.db");
+    const sqlite = new Database(path);
+    sqlite.exec(`
+      CREATE TABLE reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_path TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        status TEXT NOT NULL,
+        engine TEXT NOT NULL,
+        model TEXT,
+        diff_hash TEXT,
+        groups TEXT NOT NULL DEFAULT '[]',
+        reviewed_groups TEXT NOT NULL DEFAULT '[]',
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX reviews_repo_branch ON reviews (repo_path, branch);
+      INSERT INTO reviews (
+        repo_path, branch, status, engine, model, created_at, updated_at
+      ) VALUES (
+        '/repo', 'feat/review', 'generating', 'claude-code', 'sonnet',
+        '2026-08-18T12:00:00.000Z', '2026-08-18T12:00:00.000Z'
+      );
+    `);
+    sqlite.close();
+
+    const store = new SessionStore(openDb(path));
+    expect(store.getReview({ repoPath: "/repo", branch: "feat/review" })).toMatchObject({
+      provider: null,
+      model: "sonnet",
+    });
+  });
 });

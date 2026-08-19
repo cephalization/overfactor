@@ -2,6 +2,7 @@ import type { DaemonInfo, ReviewSubject } from "@overfactor/sdk";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useMemo, useState } from "react";
 import { BranchReview } from "@/components/branch-review.tsx";
+import { ReviewSettingsPage } from "@/components/review-settings.tsx";
 import { SessionDetail } from "@/components/session-detail.tsx";
 import { SessionSidebar } from "@/components/session-sidebar.tsx";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar.tsx";
@@ -16,10 +17,11 @@ import {
   useSetSessionArchived,
 } from "@/lib/daemon.ts";
 
-/** What the main pane shows: one session, or one branch's guided review. */
+/** What the main pane shows: a session, a branch review, or global settings. */
 export type Selection =
   | { kind: "session"; id: string }
-  | { kind: "review"; subject: ReviewSubject };
+  | { kind: "review"; subject: ReviewSubject }
+  | { kind: "settings" };
 
 export function App() {
   const info = useDaemonInfo();
@@ -78,6 +80,7 @@ function Connected({ info }: { info: DaemonInfo }) {
         selection={selection}
         onSelect={(id) => setSelection({ kind: "session", id })}
         onSelectReview={openReview}
+        onOpenSettings={() => setSelection({ kind: "settings" })}
         repos={repos.data ?? []}
         onAddRepo={() => addRepo.mutate()}
         onRemoveRepo={(path) => removeRepo.mutate(path)}
@@ -99,6 +102,8 @@ function Connected({ info }: { info: DaemonInfo }) {
             <SessionDetail baseUrl={baseUrl} session={selectedSession} onOpenReview={openReview} />
           ) : reviewSubject !== null ? (
             <BranchReview baseUrl={baseUrl} subject={reviewSubject} crTitle={reviewCrTitle} />
+          ) : selection?.kind === "settings" ? (
+            <ReviewSettingsPage baseUrl={baseUrl} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <p className="text-sm text-muted-foreground">

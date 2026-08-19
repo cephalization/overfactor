@@ -8,7 +8,10 @@ import {
   daemonInfoSchema,
   overfactorConfigSchema,
   repoBranchesResponseSchema,
+  reviewModelsResponseSchema,
   reviewResponseSchema,
+  type ReviewSettings,
+  reviewSettingsSchema,
   type ReviewSubject,
   type Session,
   sessionDiffSchema,
@@ -258,6 +261,44 @@ export function useAgentIntegrations(baseUrl: string) {
       return z.array(agentIntegrationManifestSchema).parse(await response.json());
     },
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** Persisted default engine/provider/model policy for guided reviews. */
+export function useReviewSettings(baseUrl: string) {
+  return useQuery({
+    queryKey: ["settings", baseUrl, "review"],
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).settings.review.$get();
+      if (!response.ok) throw new Error(`review settings failed (${response.status})`);
+      return reviewSettingsSchema.parse(await response.json());
+    },
+  });
+}
+
+export function useUpdateReviewSettings(baseUrl: string) {
+  return useMutation({
+    mutationFn: async (settings: ReviewSettings) => {
+      const response = await createDaemonClient(baseUrl).settings.review.$put({ json: settings });
+      if (!response.ok) throw new Error(`review settings update failed (${response.status})`);
+      return reviewSettingsSchema.parse(await response.json());
+    },
+    onSuccess: (settings) => queryClient.setQueryData(["settings", baseUrl, "review"], settings),
+  });
+}
+
+/** Authenticated Pi models available for review generation. */
+export function usePiReviewModels(baseUrl: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["agents", baseUrl, "pi", "models"],
+    enabled,
+    queryFn: async () => {
+      const response = await createDaemonClient(baseUrl).agents[":agent"].models.$get({
+        param: { agent: "pi" },
+      });
+      if (!response.ok) throw new Error(`Pi model list failed (${response.status})`);
+      return reviewModelsResponseSchema.parse(await response.json()).models;
+    },
   });
 }
 

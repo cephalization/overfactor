@@ -17,10 +17,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DIFF_OPTIONS_BASE, fileLabel } from "@/components/session-diff.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Input } from "@/components/ui/input.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import { useBranchReview, useGenerateReview, useMarkGroupReviewed } from "@/lib/daemon.ts";
+import {
+  useBranchReview,
+  useGenerateReview,
+  useMarkGroupReviewed,
+  useReviewSettings,
+} from "@/lib/daemon.ts";
 import { collapseReason } from "@/lib/diff-noise.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -277,11 +281,9 @@ export function BranchReview({
   crTitle: string | null;
 }) {
   const reviewQuery = useBranchReview(baseUrl, subject);
+  const reviewSettings = useReviewSettings(baseUrl);
   const generate = useGenerateReview(baseUrl);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Model alias for the next generation; empty means the engine's default.
-  const [modelDraft, setModelDraft] = useState("");
-  const modelOverride = modelDraft.trim() === "" ? null : modelDraft.trim();
 
   const patch = reviewQuery.data?.patch ?? null;
   const files = useMemo(() => {
@@ -359,27 +361,20 @@ export function BranchReview({
             </p>
             {!generating && (
               <div className="flex flex-col items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={modelDraft}
-                    onChange={(event) => setModelDraft(event.target.value)}
-                    placeholder="sonnet"
-                    aria-label="Model alias"
-                    className="h-9 w-36 text-center font-mono text-xs md:text-xs"
-                  />
-                  <Button
-                    onClick={() => generate.mutate({ subject, model: modelOverride })}
-                    disabled={generate.isPending}
-                  >
-                    <Sparkles />
-                    Generate review
-                  </Button>
-                </div>
-                {/* Approximate — the real invocation pipes the prompt via stdin. */}
-                <p className="font-mono text-[11px] text-muted-foreground/70">
-                  $ claude -p --output-format json --model {modelOverride ?? "sonnet"} &lt;
-                  review-prompt
-                </p>
+                <Button
+                  onClick={() => generate.mutate({ subject, model: null })}
+                  disabled={generate.isPending || reviewSettings.isPending}
+                >
+                  <Sparkles />
+                  Generate review
+                </Button>
+                {reviewSettings.data !== undefined && (
+                  <p className="font-mono text-[11px] text-muted-foreground/70">
+                    {reviewSettings.data.agent}
+                    {reviewSettings.data.provider !== null && ` · ${reviewSettings.data.provider}`}
+                    {` · ${reviewSettings.data.model}`}
+                  </p>
+                )}
               </div>
             )}
             {review?.status === "failed" && review.error !== null && (
@@ -398,7 +393,8 @@ export function BranchReview({
                 {reviewedCount}/{review.groups.length} steps reviewed ·{" "}
                 <span className="font-mono">
                   {review.engine}
-                  {review.model !== null && ` (${review.model})`}
+                  {review.provider !== null && ` · ${review.provider}`}
+                  {review.model !== null && ` · ${review.model}`}
                 </span>
                 {review.status === "failed" && review.error !== null && (
                   <span className="text-destructive"> · regeneration failed: {review.error}</span>
@@ -407,7 +403,7 @@ export function BranchReview({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => generate.mutate({ subject, model: review.model })}
+                onClick={() => generate.mutate({ subject, model: null })}
                 disabled={generating || generate.isPending}
               >
                 {generating ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
