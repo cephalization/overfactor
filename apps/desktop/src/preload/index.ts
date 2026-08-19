@@ -1,4 +1,15 @@
-import { type DaemonInfo, daemonInfoSchema } from "@overfactor/sdk";
+import {
+  type AgentKind,
+  agentKindSchema,
+  type AgentSetupResponse,
+  agentSetupResponseSchema,
+  type DaemonInfo,
+  daemonInfoSchema,
+  type InstallAgentResponse,
+  installAgentResponseSchema,
+  type OnboardingSettings,
+  onboardingSettingsSchema,
+} from "@overfactor/sdk";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { z } from "zod";
 
@@ -21,6 +32,28 @@ contextBridge.exposeInMainWorld("overfactor", {
       .nullable()
       .safeParse(await ipcRenderer.invoke("overfactor:daemon-info"), { jitless: true });
     return parsed.success ? parsed.data : null;
+  },
+  getOnboardingSettings: async (): Promise<OnboardingSettings> =>
+    onboardingSettingsSchema.parse(await ipcRenderer.invoke("overfactor:onboarding-settings"), {
+      jitless: true,
+    }),
+  setOnboardingSettings: async (settings: OnboardingSettings): Promise<OnboardingSettings> => {
+    const validated = onboardingSettingsSchema.parse(settings, { jitless: true });
+    return onboardingSettingsSchema.parse(
+      await ipcRenderer.invoke("overfactor:set-onboarding-settings", validated),
+      { jitless: true },
+    );
+  },
+  agentSetupStatus: async (): Promise<AgentSetupResponse> =>
+    agentSetupResponseSchema.parse(await ipcRenderer.invoke("overfactor:agent-setup-status"), {
+      jitless: true,
+    }),
+  installAgent: async (agent: AgentKind): Promise<InstallAgentResponse> => {
+    const validated = agentKindSchema.parse(agent, { jitless: true });
+    return installAgentResponseSchema.parse(
+      await ipcRenderer.invoke("overfactor:install-agent", validated),
+      { jitless: true },
+    );
   },
   pickDirectory: async (): Promise<string | null> =>
     pickedDirectorySchema.parse(await ipcRenderer.invoke("overfactor:pick-directory")),

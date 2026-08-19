@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -56,6 +56,13 @@ export async function readOverfactorConfig(): Promise<OverfactorConfig> {
   } catch {
     return overfactorConfigSchema.parse({});
   }
+}
+
+/** Shared validated writer for `~/.overfactor/config.json`. */
+export async function writeOverfactorConfig(config: OverfactorConfig): Promise<void> {
+  const validated = overfactorConfigSchema.parse(config);
+  await mkdir(overfactorDir(), { recursive: true });
+  await writeFile(configPath(), `${JSON.stringify(validated, null, 2)}\n`, "utf8");
 }
 
 export function daemonBaseUrl(info: DaemonInfo): string {

@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitBranchPlus,
   GitPullRequestArrow,
+  PlugZap,
   Settings,
   X,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar.tsx";
+import { PluginManagerDialog } from "@/components/plugin-manager-dialog.tsx";
 import { TrackBranchDialog } from "@/components/track-branch-dialog.tsx";
 import { filterSidebarSessions, groupSidebarItems } from "@/lib/sidebar-groups.ts";
 import { cn } from "@/lib/utils.ts";
@@ -165,6 +167,7 @@ export function SessionSidebar({
   onSetArchived: (id: string, archived: boolean) => void;
 } & RepoSectionProps) {
   const [trackRepo, setTrackRepo] = useState<string | null>(null);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const selectedId = selection?.kind === "session" ? selection.id : null;
   const reviewActive = (subject: ReviewSubject): boolean =>
     selection?.kind === "review" &&
@@ -204,6 +207,15 @@ export function SessionSidebar({
             >
               <Settings className="size-4" />
               <span className="sr-only">Settings</span>
+            </button>
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+              title="Agent plugins"
+              onClick={() => setPluginsOpen(true)}
+            >
+              <PlugZap className="size-4" />
+              <span className="sr-only">Agent plugins</span>
             </button>
             <button
               type="button"
@@ -364,6 +376,7 @@ export function SessionSidebar({
           ))
         )}
       </SidebarContent>
+      <PluginManagerDialog open={pluginsOpen} onOpenChange={setPluginsOpen} />
       <TrackBranchDialog
         baseUrl={baseUrl}
         repoPath={trackRepo}

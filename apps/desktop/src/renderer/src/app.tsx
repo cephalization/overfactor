@@ -2,6 +2,7 @@ import type { DaemonInfo, ReviewSubject } from "@overfactor/sdk";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useMemo, useState } from "react";
 import { BranchReview } from "@/components/branch-review.tsx";
+import { Onboarding } from "@/components/onboarding.tsx";
 import { ReviewSettingsPage } from "@/components/review-settings.tsx";
 import { SessionDetail } from "@/components/session-detail.tsx";
 import { SessionSidebar } from "@/components/session-sidebar.tsx";
@@ -11,6 +12,7 @@ import {
   useAddRepo,
   useCrs,
   useDaemonInfo,
+  useOnboardingSettings,
   useRemoveRepo,
   useRepos,
   useSessionInvalidation,
@@ -25,6 +27,16 @@ export type Selection =
 
 export function App() {
   const info = useDaemonInfo();
+  const onboarding = useOnboardingSettings();
+
+  if (onboarding.isLoading) {
+    return (
+      <div className="flex h-svh items-center justify-center">
+        <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+      </div>
+    );
+  }
+  if (onboarding.data?.completed !== true) return <Onboarding />;
   if (info === null) return <DaemonOffline />;
   return <Connected key={`${info.pid}:${info.port}`} info={info} />;
 }
@@ -45,6 +57,10 @@ function DaemonOffline() {
 function Connected({ info }: { info: DaemonInfo }) {
   const baseUrl = `http://127.0.0.1:${info.port}`;
   useSessionInvalidation(info.port);
+  return <Workspace info={info} baseUrl={baseUrl} />;
+}
+
+function Workspace({ info, baseUrl }: { info: DaemonInfo; baseUrl: string }) {
   const collection = useMemo(() => createSessionsCollection(baseUrl), [baseUrl]);
   const { data: sessions } = useLiveQuery(
     (q) => q.from({ session: collection }).orderBy(({ session }) => session.startedAt, "desc"),

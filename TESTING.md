@@ -6,9 +6,9 @@
 
 ```bash
 git submodule update --init && vp install && vp run -r build   # once per checkout
-pnpm overfactor install claude-code                            # once; writes ~/.claude/settings.json
-pnpm overfactor install pi                                     # once; writes ~/.pi/agent/settings.json
 vp run dev                                                     # daemon + app, hot reloading; Ctrl-C cleans up
+# First launch: install Claude Code, Pi, or both from onboarding.
+# CLI alternatives: pnpm overfactor install claude-code / install pi
 ```
 
 `vp run dev` is idempotent — it rebuilds, replaces any running daemon, and watches everything (daemon restarts on rebuild; renderer/main hot-reload). Automated suite: `vp check && vp test`. Full sweep: `vp run ready`.
@@ -19,6 +19,7 @@ If testing outside `vp run dev` (e.g. a detached `overfactor daemon start`), reb
 
 Run the quick start, then walk the list. Each item states the expected result.
 
+0. **First-run onboarding** — With no `onboarding.completed` value in `~/.overfactor/config.json`, the app opens a three-step fullscreen flow even when the daemon is down. Verify the intro and prerequisites, toggle agent integrations, inspect the repository/branch + curated-review mock, then finish: `onboarding.completed` persists as true and the daemon-offline screen appears only now if needed. Pi shows the `/reload` reminder; already-installed integrations are detected and disabled. Once connected, the sidebar Plugins button opens the standalone installer, and Settings → “Run onboarding again” immediately replays the flow.
 1. **Daemon discovery** — Quit the daemon (`overfactor daemon stop`) with the app open: main pane shows "Daemon not running". Start it again: the app reconnects within ~2 s, header shows the port.
 2. **Track a repo (GUI)** — Repos → folder-plus button → pick a git repo: it appears in the list (basename, full path on hover). Pick a non-git directory: inline "Not a git repo" error, nothing tracked.
 3. **Track a repo (CLI, live)** — With the app open: `pnpm overfactor repo add <path>` — the repo appears in the sidebar without any restart.
@@ -51,6 +52,10 @@ ROOT=$(git rev-parse --show-toplevel)    # run from the checkout
 SBX=$(mktemp -d)                          # sandbox
 export OVERFACTOR_DIR="$SBX/home" OVERFACTOR_PORT=45901
 mkdir -p "$OVERFACTOR_DIR"
+# Most app tests are not onboarding tests: skip first-run without touching the
+# human's real agent settings. To test onboarding, omit this file and NEVER
+# click an install action from the sandbox app.
+printf '{"onboarding":{"completed":true}}\n' > "$OVERFACTOR_DIR/config.json"
 
 # Fixture repo with one commit (diff stats need a HEAD)
 git init -q "$SBX/repo" && cd "$SBX/repo" && printf 'a\nb\n' > f.txt \

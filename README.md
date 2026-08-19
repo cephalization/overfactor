@@ -33,12 +33,13 @@ After any change: `vp check` and `vp test`.
 # 1. spin up everything (daemon + app, hot reloading; Ctrl-C tears it all down)
 vp run dev
 
-# 2. once: install the agent integrations
+# 2. first launch: use the fullscreen onboarding to install either integration (or both)
+# CLI alternatives:
 pnpm overfactor install claude-code   # writes ~/.claude/settings.json
 pnpm overfactor install pi            # writes ~/.pi/agent/settings.json (all projects)
 ```
 
-Both installs are user-level, so sessions report from every tracked repo — not just this one. Open Pi sessions pick the extension up after `/reload` or a restart.
+The first-run onboarding appears before daemon connection is required, explains the local architecture, installs selected integrations, and previews repository/branch grouping plus curated reviews. Replay it from Settings, or use the sidebar Plugins button to install another integration later. Both installs are user-level, so sessions report from every tracked repo — not just this one. Open Pi sessions pick the extension up after `/reload` or a restart.
 
 `vp run dev` is idempotent: it prebuilds the daemon and its deps, replaces any already-running daemon with the fresh build, watches `packages/*` sources (the daemon auto-restarts on rebuild), and hot-reloads the app (renderer via Vite, main/preload via electron-vite `-w`). For the daemon or app alone: `overfactor daemon start` / `vp run @overfactor/desktop#dev`.
 

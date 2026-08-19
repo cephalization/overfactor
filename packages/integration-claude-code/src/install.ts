@@ -59,6 +59,26 @@ function defaultHookCommand(): string {
   return `${process.execPath} ${shimPath}`;
 }
 
+function hasOverfactorHook(entries: z.infer<typeof hookEntrySchema>[]): boolean {
+  return entries.some((entry) =>
+    entry.hooks.some((hook) =>
+      HOOK_MARKERS.some((marker) => hook.command?.includes(marker) ?? false),
+    ),
+  );
+}
+
+/** Checks whether every required Claude Code hook has an Overfactor command. */
+export async function isClaudeCodeIntegrationInstalled(settingsPath?: string): Promise<boolean> {
+  const path = settingsPath ?? join(homedir(), ".claude", "settings.json");
+  try {
+    const settings = settingsSchema.parse(JSON.parse(await readFile(path, "utf8")));
+    const hooks = settings.hooks ?? {};
+    return HOOK_EVENTS.every((event) => hasOverfactorHook(hooks[event] ?? []));
+  } catch {
+    return false;
+  }
+}
+
 export async function installClaudeCodeIntegration(
   options?: InstallOptions,
 ): Promise<InstallResult> {

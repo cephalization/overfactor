@@ -57,6 +57,23 @@ export const agentIntegrationManifestSchema = z.object({
 });
 export type AgentIntegrationManifest = z.infer<typeof agentIntegrationManifestSchema>;
 
+/** Whether an agent's user-level Overfactor hook/extension is installed. */
+export const agentSetupStatusSchema = z.object({
+  agent: agentKindSchema,
+  installed: z.boolean(),
+});
+export type AgentSetupStatus = z.infer<typeof agentSetupStatusSchema>;
+
+export const agentSetupResponseSchema = z.object({
+  integrations: z.array(agentSetupStatusSchema),
+});
+export type AgentSetupResponse = z.infer<typeof agentSetupResponseSchema>;
+
+export const installAgentResponseSchema = agentSetupStatusSchema.extend({
+  installed: z.literal(true),
+});
+export type InstallAgentResponse = z.infer<typeof installAgentResponseSchema>;
+
 export function agentSupportsCapability(
   integrations: readonly AgentIntegrationManifest[],
   agent: AgentKind,
@@ -386,11 +403,21 @@ export const daemonInfoSchema = z.object({
 });
 export type DaemonInfo = z.infer<typeof daemonInfoSchema>;
 
+/** First-run experience state shared by every desktop window. */
+export const onboardingSettingsSchema = z.object({
+  completed: z.boolean(),
+});
+export type OnboardingSettings = z.infer<typeof onboardingSettingsSchema>;
+
+export const DEFAULT_ONBOARDING_SETTINGS: OnboardingSettings = { completed: false };
+
 /** Shape of `~/.overfactor/config.json`. */
 export const overfactorConfigSchema = z.object({
   /** Absolute paths of repos whose sessions the daemon tracks. */
   repos: z.array(z.string()).default([]),
   /** Agent/provider/model policy for automatic and on-demand reviews. */
   review: reviewSettingsSchema.default(DEFAULT_REVIEW_SETTINGS),
+  /** Durable first-run completion state for the desktop onboarding flow. */
+  onboarding: onboardingSettingsSchema.default(DEFAULT_ONBOARDING_SETTINGS),
 });
 export type OverfactorConfig = z.infer<typeof overfactorConfigSchema>;

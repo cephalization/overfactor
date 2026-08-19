@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installClaudeCodeIntegration } from "../src/install.ts";
+import { installClaudeCodeIntegration, isClaudeCodeIntegrationInstalled } from "../src/install.ts";
 
 async function tempSettingsPath(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "overfactor-install-"));
@@ -33,6 +33,24 @@ describe("installClaudeCodeIntegration", () => {
     }
     expect(settings.hooks.PreToolUse[0].matcher).toBe("*");
     expect(settings.hooks.SessionStart[0].matcher).toBeUndefined();
+    expect(await isClaudeCodeIntegrationInstalled(settingsPath)).toBe(true);
+  });
+
+  it("does not report a partial hook setup as installed", async () => {
+    const settingsPath = await tempSettingsPath();
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: "command", command: "node /x/overfactor-claude-hook.mjs" }] },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    expect(await isClaudeCodeIntegrationInstalled(settingsPath)).toBe(false);
   });
 
   it("is idempotent and preserves foreign hooks and settings", async () => {

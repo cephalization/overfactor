@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installPiIntegration } from "../src/install.ts";
+import { installPiIntegration, isPiIntegrationInstalled } from "../src/install.ts";
 
 async function tempSettingsPath(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "overfactor-pi-install-"));
@@ -17,6 +17,16 @@ describe("installPiIntegration", () => {
 
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     expect(settings.packages).toEqual(["/x/integration-pi"]);
+    expect(await isPiIntegrationInstalled({ settingsPath, packagePath: "/x/integration-pi" })).toBe(
+      true,
+    );
+  });
+
+  it("returns false when the settings do not load this package", async () => {
+    const settingsPath = await tempSettingsPath();
+    expect(await isPiIntegrationInstalled({ settingsPath, packagePath: "/x/integration-pi" })).toBe(
+      false,
+    );
   });
 
   it("preserves existing settings and packages, and is idempotent", async () => {

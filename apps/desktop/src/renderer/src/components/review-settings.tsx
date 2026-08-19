@@ -1,10 +1,15 @@
 import type { AgentKind, ReviewSettings } from "@overfactor/sdk";
-import { Bot, Check, Settings2 } from "lucide-react";
+import { Bot, Check, RotateCcw, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
-import { usePiReviewModels, useReviewSettings, useUpdateReviewSettings } from "@/lib/daemon.ts";
+import {
+  usePiReviewModels,
+  useReviewSettings,
+  useSetOnboardingCompleted,
+  useUpdateReviewSettings,
+} from "@/lib/daemon.ts";
 import { cn } from "@/lib/utils.ts";
 
 const AGENT_OPTIONS = [
@@ -24,6 +29,7 @@ const AGENT_OPTIONS = [
 export function ReviewSettingsPage({ baseUrl }: { baseUrl: string }) {
   const settings = useReviewSettings(baseUrl);
   const update = useUpdateReviewSettings(baseUrl);
+  const restartOnboarding = useSetOnboardingCompleted();
   const [agent, setAgent] = useState<AgentKind>("claude-code");
   const [claudeModel, setClaudeModel] = useState("sonnet");
   const [piProvider, setPiProvider] = useState("");
@@ -80,7 +86,9 @@ export function ReviewSettingsPage({ baseUrl }: { baseUrl: string }) {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-            <p className="text-sm text-muted-foreground">Configure guided review generation.</p>
+            <p className="text-sm text-muted-foreground">
+              Configure guided reviews and revisit app setup.
+            </p>
           </div>
         </div>
         <Separator />
@@ -195,6 +203,26 @@ export function ReviewSettingsPage({ baseUrl }: { baseUrl: string }) {
               )}
             </div>
           )}
+        </section>
+
+        <Separator />
+
+        <section className="flex items-center justify-between gap-6 rounded-lg border bg-muted/20 p-4">
+          <div>
+            <h2 className="text-sm font-semibold">Onboarding</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Replay the product tour or reconsider which agent plugins to install.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            disabled={restartOnboarding.isPending}
+            onClick={() => restartOnboarding.mutate(false)}
+          >
+            <RotateCcw />
+            Run onboarding again
+          </Button>
         </section>
 
         <div className="flex items-center gap-3 border-t pt-5">

@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@overfactor/daemon": "workspace:*",
+    "@overfactor/integration-claude-code": "workspace:*",
+    "@overfactor/integration-pi": "workspace:*",
     "@overfactor/sdk": "workspace:*",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",

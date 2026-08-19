@@ -1,7 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { readOverfactorConfig } from "@overfactor/sdk/node";
-import { writeOverfactorConfig } from "./settings.ts";
+import { readOverfactorConfig, writeOverfactorConfig } from "@overfactor/sdk/node";
 
 /**
  * Tracked-repo mutations on `~/.overfactor/config.json`. The daemon's HTTP

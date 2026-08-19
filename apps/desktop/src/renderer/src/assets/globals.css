@@ -113,6 +113,49 @@
     @apply bg-background text-foreground;
   }
 
+  @keyframes onboarding-step-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.995);
+      filter: blur(3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0);
+    }
+  }
+
+  @keyframes onboarding-orb-drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(24px, 18px, 0) scale(1.06);
+    }
+  }
+
+  .onboarding-step {
+    animation: onboarding-step-in 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .onboarding-orb {
+    animation: onboarding-orb-drift 12s ease-in-out infinite;
+  }
+
+  .onboarding-orb-delayed {
+    animation-delay: -5s;
+    animation-direction: reverse;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .onboarding-step,
+    .onboarding-orb {
+      animation: none;
+    }
+  }
+
   /* Minimal scrollbars: transparent track, slim rounded thumb from the
    * foreground token so both themes work. Pierre's diff/tree surfaces render
    * in shadow DOM and receive the same rules via their unsafeCSS option

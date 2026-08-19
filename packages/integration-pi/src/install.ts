@@ -38,6 +38,21 @@ function resolvesToPackage(entry: string, settingsDir: string, packagePath: stri
   return resolve(settingsDir, entry) === packagePath;
 }
 
+/** Checks whether Pi's user settings load this integration package. */
+export async function isPiIntegrationInstalled(options?: InstallPiOptions): Promise<boolean> {
+  const settingsPath = options?.settingsPath ?? join(homedir(), ".pi", "agent", "settings.json");
+  const packagePath = resolve(options?.packagePath ?? defaultPackagePath());
+  try {
+    const settings = piSettingsSchema.parse(JSON.parse(await readFile(settingsPath, "utf8")));
+    const settingsDir = dirname(settingsPath);
+    return (settings.packages ?? []).some((entry) =>
+      resolvesToPackage(entry, settingsDir, packagePath),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function installPiIntegration(options?: InstallPiOptions): Promise<InstallPiResult> {
   const settingsPath = options?.settingsPath ?? join(homedir(), ".pi", "agent", "settings.json");
   const packagePath = resolve(options?.packagePath ?? defaultPackagePath());

@@ -170,6 +170,12 @@ importers:
       '@overfactor/daemon':
         specifier: workspace:*
         version: link:../../packages/daemon
+      '@overfactor/integration-claude-code':
+        specifier: workspace:*
+        version: link:../../packages/integration-claude-code
+      '@overfactor/integration-pi':
+        specifier: workspace:*
+        version: link:../../packages/integration-pi
       '@overfactor/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

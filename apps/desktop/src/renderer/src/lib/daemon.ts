@@ -1,11 +1,15 @@
 import { createDaemonClient } from "@overfactor/daemon/client";
 import {
   agentIntegrationManifestSchema,
+  agentSetupResponseSchema,
+  type AgentKind,
   type ChangeRequest,
   changeRequestSchema,
   continueConversationResponseSchema,
   type DaemonInfo,
   daemonInfoSchema,
+  installAgentResponseSchema,
+  onboardingSettingsSchema,
   overfactorConfigSchema,
   repoBranchesResponseSchema,
   reviewModelsResponseSchema,
@@ -249,6 +253,41 @@ export function useSessionDiff(baseUrl: string, sessionId: string) {
       if (!response.ok) throw new Error(`diff request failed (${response.status})`);
       return sessionDiffSchema.parse(await response.json());
     },
+  });
+}
+
+/** User-level hook/extension installation state from privileged Electron IPC. */
+export function useAgentSetup() {
+  return useQuery({
+    queryKey: ["agent-setup"],
+    queryFn: async () =>
+      agentSetupResponseSchema.parse(await window.overfactor.agentSetupStatus()).integrations,
+  });
+}
+
+/** Installs one user-level agent integration through privileged Electron IPC. */
+export function useInstallAgent() {
+  return useMutation({
+    mutationFn: async (agent: AgentKind) =>
+      installAgentResponseSchema.parse(await window.overfactor.installAgent(agent)),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-setup"] }),
+  });
+}
+
+/** Durable first-run state, available through Electron even while the daemon is offline. */
+export function useOnboardingSettings() {
+  return useQuery({
+    queryKey: ["onboarding"],
+    queryFn: async () =>
+      onboardingSettingsSchema.parse(await window.overfactor.getOnboardingSettings()),
+  });
+}
+
+export function useSetOnboardingCompleted() {
+  return useMutation({
+    mutationFn: async (completed: boolean) =>
+      onboardingSettingsSchema.parse(await window.overfactor.setOnboardingSettings({ completed })),
+    onSuccess: (settings) => queryClient.setQueryData(["onboarding"], settings),
   });
 }
 

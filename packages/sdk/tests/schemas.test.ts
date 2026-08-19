@@ -7,9 +7,19 @@ import {
   daemonInfoSchema,
   hookEventSchema,
   normalizeReviewGroups,
+  overfactorConfigSchema,
   sessionSchema,
   transcriptEntrySchema,
 } from "../src/index.ts";
+
+describe("overfactorConfigSchema", () => {
+  it("defaults a fresh install to incomplete onboarding", () => {
+    expect(overfactorConfigSchema.parse({})).toMatchObject({
+      repos: [],
+      onboarding: { completed: false },
+    });
+  });
+});
 
 describe("agent integration capabilities", () => {
   it("lets clients discover optional features by agent", () => {
