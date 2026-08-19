@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installPiIntegration, isPiIntegrationInstalled } from "../src/install.ts";
 
@@ -10,6 +10,13 @@ async function tempSettingsPath(): Promise<string> {
 }
 
 describe("installPiIntegration", () => {
+  it("resolves its package root when the caller does not provide one", async () => {
+    const settingsPath = await tempSettingsPath();
+    const result = await installPiIntegration({ settingsPath });
+
+    expect(result.packagePath).toBe(resolve(import.meta.dirname, ".."));
+  });
+
   it("creates settings with the package path when none exist", async () => {
     const settingsPath = await tempSettingsPath();
     const result = await installPiIntegration({ settingsPath, packagePath: "/x/integration-pi" });

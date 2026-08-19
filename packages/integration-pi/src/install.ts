@@ -29,8 +29,10 @@ export interface InstallPiOptions {
 }
 
 function defaultPackagePath(): string {
-  // dist/install.mjs sits one level below the package root.
-  return fileURLToPath(new URL("..", import.meta.url));
+  // Resolve the package by name instead of walking from this module URL.
+  // Desktop bundlers may inline this installer into their own output, where
+  // import.meta.url belongs to the app bundle rather than this package.
+  return dirname(fileURLToPath(import.meta.resolve("@overfactor/integration-pi/package.json")));
 }
 
 /** Pi resolves relative package paths against the settings file's directory. */

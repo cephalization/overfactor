@@ -248,6 +248,10 @@ The desktop app opens a durable three-step fullscreen onboarding flow until `con
 
 Agent integration installation and onboarding state intentionally cross **privileged Electron IPC**, not the daemon HTTP API. The daemon's loopback CORS policy is currently unauthenticated and accepts local browser origins; exposing either mutation there would let an unrelated localhost page write `~/.claude/settings.json`, `~/.pi/agent/settings.json`, or app-shell state. The SDK's Node entry owns the shared validated `config.json` writer, Electron main validates requests, the preload validates arguments/results with jitless zod, and the renderer validates again. Agent-driven UI tests should preseed `{"onboarding":{"completed":true}}` unless they are explicitly testing the flow, and must never click an integration install action from a sandbox app because integrations are correctly user-level rather than `OVERFACTOR_DIR`-scoped.
 
+## 2026-08-19 — resolved — agent installer paths when bundled into Electron
+
+The onboarding/plugin-manager installers derived their own artifacts from `import.meta.url`. That is correct when the integration package stays external, but a running Electron dev build that had inlined the installer resolved Pi's package root as `apps/desktop/out` (and would similarly resolve Claude's hook beside the app bundle). Clicking Install then wrote an unloadable directory to `~/.pi/agent/settings.json`, preventing Pi startup. Both installers now resolve their package's exported `package.json` by package name and derive artifacts from that root, so behavior is stable whether the installer module is externalized or bundled.
+
 ## 2026-08-19 — implemented — Pi review engine + configurable review defaults
 
 Curated-review generation now works through both integrated harnesses. Shared patch budgeting, manifest rendering, guided-walkthrough prompt construction, JSON extraction/correction retry, and bounded subprocess execution moved to `@overfactor/integration-utils`; the Claude Code and Pi packages retain only harness-specific invocation/output knowledge.

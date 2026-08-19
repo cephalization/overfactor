@@ -55,8 +55,13 @@ export interface InstallOptions {
 }
 
 function defaultHookCommand(): string {
-  const shimPath = fileURLToPath(new URL("./hook.mjs", import.meta.url));
-  return `${process.execPath} ${shimPath}`;
+  // Resolve the package by name instead of walking from this module URL.
+  // Desktop bundlers may inline this installer into their own output, where
+  // import.meta.url belongs to the app bundle rather than this package.
+  const packagePath = dirname(
+    fileURLToPath(import.meta.resolve("@overfactor/integration-claude-code/package.json")),
+  );
+  return `${process.execPath} ${join(packagePath, "dist", "hook.mjs")}`;
 }
 
 function hasOverfactorHook(entries: z.infer<typeof hookEntrySchema>[]): boolean {

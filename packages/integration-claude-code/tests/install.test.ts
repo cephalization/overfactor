@@ -1,6 +1,6 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installClaudeCodeIntegration, isClaudeCodeIntegrationInstalled } from "../src/install.ts";
 
@@ -10,6 +10,15 @@ async function tempSettingsPath(): Promise<string> {
 }
 
 describe("installClaudeCodeIntegration", () => {
+  it("resolves its hook shim when the caller does not provide a command", async () => {
+    const settingsPath = await tempSettingsPath();
+    const result = await installClaudeCodeIntegration({ settingsPath });
+
+    expect(result.hookCommand).toBe(
+      `${process.execPath} ${resolve(import.meta.dirname, "..", "dist", "hook.mjs")}`,
+    );
+  });
+
   it("writes hooks for every lifecycle event into fresh settings", async () => {
     const settingsPath = await tempSettingsPath();
     const result = await installClaudeCodeIntegration({
